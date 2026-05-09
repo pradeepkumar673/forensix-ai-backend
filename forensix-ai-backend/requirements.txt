@@ -1,0 +1,148 @@
+# ==============================================================================
+# Forensix AI Backend — requirements.txt
+# ==============================================================================
+# Install with:  pip install -r requirements.txt
+#
+# GPU note: Replace torch/torchvision/torchaudio lines with CUDA-specific
+#           wheels if running on a CUDA-capable GPU, e.g.:
+#             pip install torch torchvision torchaudio \
+#               --index-url https://download.pytorch.org/whl/cu121
+#
+# REMOVED (problematic / hard to install without mim build toolchain):
+#   ✗ mmpose       — requires mim + mmcv C++ build; replaced by ViTPose via transformers/timm
+#   ✗ mmcv         — requires CUDA toolkit match and C++ compiler
+#   ✗ mmengine     — mmpose dependency, not needed without mmpose
+#   ✗ openmim      — mim CLI only needed to install mmlab packages
+#
+# All advanced vision tasks (ViTPose, MedSAM2, wound classifier, deepfake)
+# are now served via HuggingFace transformers + timm instead.
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+# Web framework & server
+# ------------------------------------------------------------------------------
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+python-multipart>=0.0.9          # file upload support
+
+# ------------------------------------------------------------------------------
+# HTTP clients (async + sync)
+# ------------------------------------------------------------------------------
+httpx>=0.27.0
+requests>=2.31.0
+aiofiles>=23.2.1
+
+# ------------------------------------------------------------------------------
+# PyTorch ecosystem — CPU wheels (swap for CUDA wheels in GPU environments)
+# ------------------------------------------------------------------------------
+torch>=2.3.0
+torchvision>=0.18.0
+torchaudio>=2.3.0
+
+# ------------------------------------------------------------------------------
+# Hugging Face core libraries
+# ------------------------------------------------------------------------------
+transformers>=4.41.0             # BERT, Wav2Vec2, ViT, pipelines, etc.
+tokenizers>=0.19.0               # Fast Rust tokenizers (transformers dependency)
+huggingface-hub>=0.23.0          # Model/dataset download, cache management
+datasets>=2.19.0                 # Dataset loading utilities
+accelerate>=0.30.0               # Mixed-precision, device placement helpers
+safetensors>=0.4.3               # Safe model weight serialisation
+
+# ------------------------------------------------------------------------------
+# MedSAM2 / SAM2 — medical image segmentation
+# Meta SAM2 backbone; MedSAM2 weights loaded via huggingface-hub on top.
+# ------------------------------------------------------------------------------
+git+https://github.com/facebookresearch/segment-anything-2.git        # Meta SAM2 — backbone for MedSAM2
+
+# ------------------------------------------------------------------------------
+# ViTPose — human pose estimation via transformers + timm
+# NOTE: mmpose / mmcv / mmengine REMOVED — ViTPose is now loaded via the
+#       HuggingFace transformers ViTPose integration (usyd-community/vitpose*)
+#       which requires only timm + transformers (already listed above).
+# ------------------------------------------------------------------------------
+timm>=1.0.3                      # Vision transformer building blocks (ViT, Swin…)
+
+# ------------------------------------------------------------------------------
+# Deepfake / image tampering detection
+# EfficientNet + timm-based Xception classifiers; no mmlab needed.
+# ------------------------------------------------------------------------------
+efficientnet-pytorch>=0.7.1      # EfficientNet backbone for deepfake detection
+
+# ------------------------------------------------------------------------------
+# Medical NER — BioClinicalBERT / PubMedBERT via transformers pipeline
+# spaCy + scispaCy for entity-ruler and biomedical NLP utilities.
+# ------------------------------------------------------------------------------
+spacy>=3.7.4                     # NLP pipeline (entity ruler, displacy)
+scispacy>=0.5.4                  # scispaCy biomedical models & linkers
+# To install the scispaCy model after pip install:
+#   pip install https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz
+
+# ------------------------------------------------------------------------------
+# Audio analysis — Wav2Vec2 emotion/stress + Whisper transcription
+# torchaudio (above) provides I/O; librosa covers feature engineering.
+# ------------------------------------------------------------------------------
+librosa>=0.10.2                  # Audio feature extraction (MFCC, spectrograms…)
+soundfile>=0.12.1                # Audio file I/O backend for librosa
+# pyaudio>=0.2.14                # Real-time mic input — uncomment only if needed
+                                 # (requires portaudio system library: apt-get install portaudio19-dev)
+
+# ------------------------------------------------------------------------------
+# Computer vision utilities
+# ------------------------------------------------------------------------------
+opencv-python>=4.9.0.80          # Image processing, video frame extraction
+pillow>=10.3.0                   # Image loading, thumbnail, format conversion
+
+# ------------------------------------------------------------------------------
+# YOLO (Ultralytics) — object detection / forensic scene parsing
+# ------------------------------------------------------------------------------
+ultralytics>=8.2.0               # YOLOv8 / YOLOv9 / YOLOv10 unified API
+
+# ------------------------------------------------------------------------------
+# Numerical / scientific stack
+# ------------------------------------------------------------------------------
+numpy>=1.26.4
+scipy>=1.13.0
+scikit-learn>=1.4.2
+pandas>=2.2.2
+matplotlib>=3.8.4
+seaborn>=0.13.2
+
+# ------------------------------------------------------------------------------
+# Embeddings / vector store
+# ------------------------------------------------------------------------------
+sentence-transformers>=3.0.0
+chromadb>=0.5.0
+
+# ------------------------------------------------------------------------------
+# Document handling
+# ------------------------------------------------------------------------------
+pypdf>=4.2.0
+pdfplumber>=0.11.0
+python-docx>=1.1.2
+reportlab>=4.2.0
+
+# ------------------------------------------------------------------------------
+# Graph utilities
+# ------------------------------------------------------------------------------
+networkx>=3.3
+pyvis>=0.3.2
+
+# ------------------------------------------------------------------------------
+# LLM provider integrations
+# ------------------------------------------------------------------------------
+openai>=1.14.0                   # Featherless AI (OpenAI-compatible client)
+litellm>=1.34.0                  # Unified LLM router (Ollama + cloud providers)
+
+# ------------------------------------------------------------------------------
+# Utilities
+# ------------------------------------------------------------------------------
+python-dotenv>=1.0.1
+tenacity>=8.3.0                  # Retry logic for model inference calls
+tqdm>=4.66.4                     # Progress bars for batch inference
+loguru>=0.7.2                    # Structured logging
+psutil>=5.9.8                    # System resource monitoring (GPU/CPU usage)
+langdetect>=1.0.9

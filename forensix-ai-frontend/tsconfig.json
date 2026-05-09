@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "pages/**/*.tsx",
+    "stores/**/*.ts",
+    "providers/**/*.tsx",
+    "lib/**/*.ts",
+    "hooks/**/*.ts",
+    "vite.config.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "components/ui/aspect-ratio.tsx",
+    "components/ui/calendar.tsx",
+    "components/ui/carousel.tsx",
+    "components/ui/context-menu.tsx",
+    "components/ui/drawer.tsx",
+    "components/ui/form.tsx",
+    "components/ui/input-otp.tsx",
+    "components/ui/menubar.tsx",
+    "components/ui/navigation-menu.tsx",
+    "components/ui/radio-group.tsx",
+    "components/ui/resizable.tsx",
+    "components/ui/toggle-group.tsx",
+    "components/ui/toggle.tsx"
+  ]
+}
