@@ -703,6 +703,7 @@ async def ping_vision_model(model: str = _DEFAULT_VISION_MODEL) -> dict[str, Any
 def _advanced_disabled_response(feature: str) -> dict[str, Any]:
     """Standard response when ENABLE_ADVANCED_VISION is False."""
     return {
+        "status": "error",
         "error": (
             f"Advanced vision feature '{feature}' is disabled. "
             "Set ENABLE_ADVANCED_VISION=true in your .env to enable it."
@@ -814,6 +815,7 @@ async def analyze_wound_segmentation(
         )
 
         return {
+            "status":     "ok",
             "masks":      masks_out,
             "mask_count": len(masks_out),
             "image_dims": {"width": width, "height": height},
@@ -967,6 +969,7 @@ async def analyze_pose_and_defensive_wounds(
         )
 
         return {
+            "status":                     "ok",
             "keypoints":                  keypoints,
             "keypoint_count":             len(keypoints),
             "pose_summary":               pose_summary,
@@ -974,6 +977,7 @@ async def analyze_pose_and_defensive_wounds(
             "defensive_posture_score":    round(defensive_score, 3),
             "model_id":                   bundle.model_id,
             "device":                     bundle.device,
+            "image_dims":                 {"width": img_w, "height": img_h},
             "advanced_vision_enabled":    True,
         }
 
@@ -1212,6 +1216,7 @@ async def detect_image_tampering(
         )
 
         return {
+            "status":                  "ok",
             "tampered":                tampered,
             "tampering_probability":   round(combined_score, 4),
             "verdict":                 verdict,

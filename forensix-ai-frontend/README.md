@@ -1,102 +1,136 @@
-# ForensiX AI — Neural Forensic Frontend (Vite)
+# ForensiX AI — Neural Forensic Frontend
 
-Production-grade cyber-forensic operator shell for the FastAPI backend in `forensix-ai-backend/`. This client maps **every** versioned router under `/api/v1` (`upload`, `analyze`, `correlate`, `risk`, `assistant`, `report`) plus system probes (`/health`, `/status/models`, `/api/v1/status`).
+Production **dark-only** intelligence workspace for the **ForensiX FastAPI** backend.
 
-## Stack
+**Stack:** React 18 · Vite · TypeScript · Tailwind CSS v4 · shadcn/ui (Radix) · Framer Motion 11 · TanStack Query v5 · Zustand · React Router v6.4+ · React Flow · Recharts · Konva · Lucide · Sonner.
 
-| Layer | Choice |
-|--------|--------|
-| Runtime | React 18 + TypeScript |
-| Bundler | Vite 6 |
-| Routing | React Router 6 |
-| Server state | TanStack Query v5 |
-| Client state | Zustand (+ `persist` for cases & sessions) |
-| Styling | Tailwind CSS v4 (`@tailwindcss/vite`) |
-| Components | Existing shadcn/Radix kit in `components/ui/` |
-| Motion | Framer Motion |
-| Graph | `@xyflow/react` (Knowledge Graph showcase) |
-| Body twin | Konva + `react-konva` (Digital Autopsy Lab) |
-| Charts | Recharts + Chart.js |
-
-## Prerequisites
-
-1. **Backend** running (default `http://127.0.0.1:8000`). From the backend repo: install Python deps and `uvicorn` per that project’s README.
-2. Ensure backend **CORS** includes your frontend origin (`http://localhost:5173` during `npm run dev`). This is configured in `forensix-ai-backend` via `CORS_ORIGINS`.
-3. **Node.js 18+** and npm.
-
-## Setup
-
-```bash
-cd forensix-ai-frontend
-cp .env.example .env
-# edit .env → VITE_API_BASE_URL=http://127.0.0.1:8000
-npm install
-npm run dev
-```
-
-Production bundle:
-
-```bash
-npm run build
-npm run preview   # serves ./dist locally
-```
-
-## Environment
-
-| Variable | Meaning |
-|-----------|---------|
-| `VITE_API_BASE_URL` | FastAPI root (**no** `/api/v1` suffix). Defaults to `http://127.0.0.1:8000` if unset.
-
-## Backend integration cheatsheet
-
-- **Models / LLM routing**: GET `/status/models` → surfaced in **Model Status Rail** (`llm_provider: featherless | ollama`, vision/audio flags, warmed HF checkpoints).
-- **Uploads**: `POST /api/v1/upload/report|images|digital-evidence|statements`.
-- **Analysis**: report + time-of-death JSON, bulk images, `/analyze/combined`, vision (`segmentation`, `pose`, `tampering`), audio stress/transcribe.
-- **Correlation**: timeline build/fetch, knowledge graph build/fetch/metrics/HTML, contradiction sweep, timeline validation.
-- **Risk**: `/risk/score|anomalies|contradictions|leads|full`.
-- **Oracle**: `/assistant/chat` (+ SSE stream endpoint wired for future use).
-- **Reports**: `/api/v1/report/generate` returns **PDF blob**; `/report/list` + `/report/download/{file}` linked in **Report Forge**.
-
-Errors are normalized into in-universe copy via `ForensicApiError` (e.g. “Neural analysis mesh offline…” for 503-class faults).
-
-## Case IDs
-
-FastAPI endpoints expect **`case_id` UUIDs**. The frontend **Case Matrix** (Zustand + `localStorage`) issues valid `crypto.randomUUID()` values — set **Active lock** before hitting analysis/correlation forms so query params align with backend envelopes.
-
-## Operator UX
-
-| Shortcut | Action |
-|----------|--------|
-| `⌘/Ctrl + K` | Neural command palette (route jumps) |
-| `⌘/Ctrl + Enter` | Toggle **Forensic Oracle** sheet |
-| Persistent orb | Opens Oracle while collapsed |
-
-Dark “obsidian lab” visuals live in `src/index.css`: glass panels, holographic trims (`holo-edge`), scanlines utility, neon + **crimson `#991b1b`** accents, Inter / Space Grotesk / JetBrains Mono.
-
-## Project map (high-signal)
-
-```
-components/
-  ui/               # shadcn primitives (subset excluded from TSC if unused)
-  graph/KnowledgeGraphBoard.tsx   # xyflow constellation
-  lab/BodyMapTwin.tsx             # Konva anterior/posterior twin
-  oracle/OraclePanel.tsx          # Assistant UX
-hooks/useGlobalShortcuts.ts
-lib/api.ts                       # Axios wrappers for FastAPI surface
-pages/                           # Routed screens (Login … Report Forge)
-providers/AppProviders.tsx       # TanStack Query client
-stores/case-store.ts             # Dossiers
-stores/session-store.ts          # Operator + assistant session ids
-src/main.tsx · src/App.tsx · src/index.css
-```
-
-## Troubleshooting
-
-- **`/openapi.json` 404**: backend ships docs only when `DEBUG=true`.
-- **`OPTIONS` failures**: widen `CORS_ORIGINS`.
-- **`422` UUID errors**: pick an active dossier or paste a UUID in lab/workspace forms.
-- **Graph build succeeds but XYFlow empty**: POST `/correlate/graph` returns a summary envelope — the UI hydrates via GET `/correlate/graph/{case_id}` immediately after ingestion.
+**Charts:** Recharts powers gauges/radar/areas. **`@tremor/react`** targets Tailwind v3; this repo ships **`FxMetric`** — Tremor-equivalent metric tiles fully compatible with Tailwind v4.
 
 ---
 
-ForensiX — *NEXUS-9 workstation build.* Chain integrity starts at the ingress layer.
+## 1. Folder structure
+
+```
+forensix-ai-frontend/
+├── index.html
+├── package.json
+├── vite.config.ts
+├── tsconfig.json
+├── components.json          # shadcn/ui
+├── .env.example
+├── public/
+└── src/
+    ├── main.tsx
+    ├── index.css            # Design tokens, glass/scanline utilities
+    ├── app/
+    │   ├── providers.tsx    # QueryClient + Sonner
+    │   ├── router.tsx       # createBrowserRouter routes
+    │   ├── RequireAuth.tsx
+    │   └── ShortcutsRoot.tsx
+    ├── components/
+    │   ├── command/         # ⌘K NeuralCommandPalette
+    │   ├── dashboard/       # RiskGaugeCard (Recharts donut)
+    │   ├── effects/         # CyberBackdrop, ScanningOverlay
+    │   ├── lab/             # DigitalAutopsyLab, BodyMapStage (Konva twin)
+    │   ├── layout/          # AppShell, Sidebar, TopBar
+    │   ├── metrics/         # FxMetric (Tremor-style tiles)
+    │   ├── oracle/          # ForensicOracle (assistant sheet)
+    │   ├── ui/              # shadcn primitives
+    │   ├── vault/           # EvidenceVaultDropzone
+    │   └── workspace/       # KnowledgeGraphBoard, TimelineVertical
+    ├── hooks/               # Keyboard shortcuts, responsive helpers
+    ├── lib/
+    │   ├── api.ts           # Axios clients → /api/v1/*
+    │   ├── forensic-errors.ts
+    │   ├── query-keys.ts
+    │   └── utils.ts
+    ├── pages/
+    │   ├── LoginPage.tsx
+    │   ├── DashboardPage.tsx
+    │   ├── CasesPage.tsx
+    │   ├── NewCasePage.tsx
+    │   ├── VaultPage.tsx
+    │   ├── LabPage.tsx
+    │   ├── WorkspacePage.tsx
+    │   └── ReportForgePage.tsx
+    └── stores/
+        ├── auth-store.ts
+        ├── case-store.ts
+        └── ui-store.ts
+```
+
+---
+
+## 2. Setup instructions
+
+```bash
+cd forensix-ai-frontend
+npm install
+cp .env.example .env.local   # optional
+npm run dev
+```
+
+- Dev UI: **http://localhost:5173**
+- Production bundle:
+
+```bash
+npm run build && npm run preview
+```
+
+Typecheck only:
+
+```bash
+npm run lint
+```
+
+---
+
+## 3. Connect to the backend
+
+1. Run the API from **`forensix-ai-backend`** (example):
+
+   ```bash
+   uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+   ```
+
+2. Set **`VITE_API_BASE_URL`** in `.env.local` to that origin (default `http://127.0.0.1:8000`).
+
+3. **CORS:** With the backend on `127.0.0.1` and Vite on `localhost`, enable the API’s dev CORS behavior (e.g. **`DEBUG=true`** so `allow_origin_regex` matches localhost / 127.0.0.1), or add explicit origins in **`CORS_ORIGINS`**.
+
+4. Readiness and models:
+
+   - `GET /health`, `GET /ready`, `GET /status/models`, `GET /api/v1/status`
+
+5. Case dossiers are **persisted in the browser** (Zustand `persist`). Select an active case in the **top bar** before vault / lab / workspace flows.
+
+---
+
+## 4. Major components & surfaces
+
+| Area | Components / behavior |
+|------|----------------------|
+| **Auth** | `LoginPage` — biometric-style ingress + optional access token |
+| **Shell** | `AppShell`, `Sidebar`, `TopBar`, `CyberBackdrop`, `ScanningOverlay` |
+| **Dashboard** | `RiskGaugeCard`, `FxMetric`, dossier table, readiness/model queries |
+| **Cases** | `CasesPage`, `NewCasePage` — filters + rich metadata |
+| **Vault** | `EvidenceVaultDropzone` — MIME-aware uploads + TanStack mutations |
+| **Digital lab** | `DigitalAutopsyLab`, `BodyMapStage` — tabs, Konva twin, zoom/pan/measure, wound selection + inspector, vision API hooks |
+| **Workspace** | Report highlights, `TimelineVertical`, `KnowledgeGraphBoard`, audio stress/transcribe, risk radar (Recharts) |
+| **Oracle** | `ForensicOracle` — `/assistant/chat`, markdown, prompt chips |
+| **Report forge** | `ReportForgePage` — preview + `POST /api/v1/report/generate` PDF download |
+| **Navigation** | `NeuralCommandPalette` (⌘K), keyboard shortcuts in `ShortcutsRoot` / hooks |
+
+---
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| **⌘/Ctrl + K** | Neural command palette |
+| **⌥ + D** | Dashboard |
+| **⌥ + L** | Digital autopsy lab |
+| **⌥ + W** | Intelligence workspace |
+
+---
+
+© ForensiX — demonstration UX; align with your agency accreditation and evidence-handling policy before operational deployment.

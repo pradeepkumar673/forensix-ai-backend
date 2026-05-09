@@ -30,7 +30,10 @@ async def analyze_audio_stress(audio_bytes: bytes) -> dict[str, Any]:
     """
     settings = get_settings()
     if not settings.ENABLE_AUDIO_ANALYSIS:
-        return {"error": "Audio analysis is disabled in configuration."}
+        return {
+            "status": "error",
+            "error": "Audio analysis is disabled in configuration.",
+        }
 
     try:
         bundle = await load_audio_models()
@@ -63,15 +66,16 @@ async def analyze_audio_stress(audio_bytes: bytes) -> dict[str, Any]:
             stress_results = sorted(zip(bundle.stress_labels, stress_probs), key=lambda x: x[1], reverse=True)
 
         return {
+            "status": "ok",
             "primary_emotion": emo_results[0][0],
             "emotion_confidence": emo_results[0][1],
             "all_emotions": [{"label": e[0], "score": e[1]} for e in emo_results[:3]],
             "stress_indicators": [{"label": s[0], "score": s[1]} for s in stress_results[:3]] if stress_results else [],
-            "overall_assessment": "Analysis complete."
+            "overall_assessment": "Analysis complete.",
         }
     except Exception as exc:
         logger.error("Audio stress analysis failed: %s", exc)
-        return {"error": str(exc)}
+        return {"status": "error", "error": str(exc)}
 
 async def transcribe_audio(audio_bytes: bytes) -> dict[str, Any]:
     """
@@ -79,7 +83,10 @@ async def transcribe_audio(audio_bytes: bytes) -> dict[str, Any]:
     """
     settings = get_settings()
     if not settings.ENABLE_AUDIO_ANALYSIS:
-        return {"error": "Audio analysis is disabled in configuration."}
+        return {
+            "status": "error",
+            "error": "Audio analysis is disabled in configuration.",
+        }
 
     try:
         from transformers import pipeline
@@ -101,8 +108,9 @@ async def transcribe_audio(audio_bytes: bytes) -> dict[str, Any]:
         
         result = await asyncio.to_thread(pipe, waveform)
         return {
-            "transcription": result.get("text", "").strip()
+            "status": "ok",
+            "transcription": result.get("text", "").strip(),
         }
     except Exception as exc:
         logger.error("Audio transcription failed: %s", exc)
-        return {"error": str(exc)}
+        return {"status": "error", "error": str(exc)}

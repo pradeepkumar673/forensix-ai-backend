@@ -54,6 +54,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _MODEL_CACHE: dict[str, Any] = {}
 
+# Populated by warm_up_all_models() — surfaced on GET /status/models for operators.
+LAST_WARMUP: dict[str, str] = {}
+
 
 # ===========================================================================
 # Shared helpers
@@ -77,6 +80,16 @@ def _require_advanced_vision() -> None:
         raise RuntimeError(
             "Advanced vision models are disabled. "
             "Set ENABLE_ADVANCED_VISION=true in your .env file to enable them."
+        )
+
+
+def _require_audio_analysis() -> None:
+    """Raise when HuggingFace audio models are disabled (independent of vision)."""
+    settings = _get_settings()
+    if not settings.ENABLE_AUDIO_ANALYSIS:
+        raise RuntimeError(
+            "Audio analysis models are disabled. "
+            "Set ENABLE_AUDIO_ANALYSIS=true in your .env file to enable them."
         )
 
 
@@ -858,7 +871,7 @@ async def load_deepfake_detector() -> DeepfakeBundle:
 
 def _load_audio_sync() -> AudioBundle:
     """Synchronous implementation of audio model loading."""
-    _require_advanced_vision()
+    _require_audio_analysis()
     _set_hf_env()
 
     cache_key = "audio"
@@ -963,7 +976,7 @@ async def load_audio_models() -> AudioBundle:
     Raises
     ------
     RuntimeError
-        If ``ENABLE_ADVANCED_VISION`` is ``False``.
+        If ``ENABLE_AUDIO_ANALYSIS`` is ``False``.
     """
     if "audio" in _MODEL_CACHE:
         return _MODEL_CACHE["audio"]
@@ -1141,35 +1154,33 @@ def prepare_audio_tensor(
 
 async def warm_up_all_models() -> dict[str, str]:
     """
-    Pre-load every HuggingFace model concurrently at application startup.
+    Pre-load HuggingFace models that are enabled via feature flags.
 
-    Call this inside the FastAPI lifespan context (``app/main.py``) when
-    ``ENABLE_ADVANCED_VISION=true`` to pay the one-time weight-loading cost
-    before the first request arrives, rather than on first use.
+    Vision bundle loads when ``ENABLE_ADVANCED_VISION``; audio when
+    ``ENABLE_AUDIO_ANALYSIS``. Results are stored in ``LAST_WARMUP`` for
+    ``GET /status/models``.
 
     Returns
     -------
     dict[str, str]
-        Mapping of model name → "ok" or error message, useful for the
-        ``/health`` endpoint to report model readiness.
-
-    Example
-    -------
-    ```python
-    # In app/main.py lifespan:
-    if settings.ENABLE_ADVANCED_VISION:
-        status = await warm_up_all_models()
-        logger.info("HF model warm-up: %s", status)
-    ```
+        Mapping of model name → "ok" or error message.
     """
-    loaders = {
-        "medsam2":          load_medsam2,
-        "vitpose":          load_vitpose,
-        "wound_classifier": load_wound_classifier,
-        "med_ner":          load_med_ner,
-        "deepfake":         load_deepfake_detector,
-        "audio":            load_audio_models,
-    }
+    global LAST_WARMUP
+    settings = _get_settings()
+    loaders: dict[str, Any] = {}
+
+    if settings.ENABLE_ADVANCED_VISION:
+        loaders.update(
+            {
+                "medsam2": load_medsam2,
+                "vitpose": load_vitpose,
+                "wound_classifier": load_wound_classifier,
+                "med_ner": load_med_ner,
+                "deepfake": load_deepfake_detector,
+            }
+        )
+    if settings.ENABLE_AUDIO_ANALYSIS:
+        loaders["audio"] = load_audio_models
 
     results: dict[str, str] = {}
 
@@ -1182,5 +1193,7 @@ async def warm_up_all_models() -> dict[str, str]:
             results[name] = f"error: {exc}"
             logger.error("✗ Model warm-up failed: %s — %s", name, exc)
 
-    await asyncio.gather(*[_safe_load(n, fn) for n, fn in loaders.items()])
+    if loaders:
+        await asyncio.gather(*[_safe_load(n, fn) for n, fn in loaders.items()])
+    LAST_WARMUP = dict(results)
     return results

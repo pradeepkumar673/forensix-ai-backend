@@ -5,11 +5,11 @@ Handles risk scoring, anomaly detection, contradiction detection,
 and lead recommendations for forensic case analysis.
 """
 
-import re
 import json
 import logging
 from typing import Any
-from app.services.llm_service import get_llm_response
+
+from app.services.llm_service import _extract_json_block, get_llm_response
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +18,62 @@ logger = logging.getLogger(__name__)
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _safe_json(raw: str) -> dict | list:
-    """Strip markdown fences and parse JSON from LLM output."""
-    cleaned = re.sub(r"```(?:json)?|```", "", raw).strip()
-    return json.loads(cleaned)
+def _parse_llm_object(raw_text: str) -> dict[str, Any]:
+    """Parse a JSON object from LLM output (fences, <json> tags, or bare object)."""
+    text = (raw_text or "").strip()
+    if not text:
+        raise ValueError("empty LLM response")
+    return _extract_json_block(text)
+
+
+def _fallback_risk_score(case_data: dict) -> dict[str, Any]:
+    return {
+        "overall_risk": 40.0,
+        "dimensions": {
+            "evidence_integrity": 40.0,
+            "witness_reliability": 40.0,
+            "timeline_consistency": 40.0,
+            "motive_strength": 40.0,
+            "forensic_gaps": 40.0,
+        },
+        "verdict": "MEDIUM",
+        "rationale": (
+            "LLM unavailable or returned non-JSON. Start Ollama, set FEATHERLESS_API_KEY, "
+            "or inspect server logs. Placeholder score only."
+        ),
+        "_fallback": True,
+        "_case_echo": {k: case_data.get(k) for k in ("report_text", "evidence_summary") if k in case_data},
+    }
+
+
+def _fallback_anomalies(reason: str) -> dict[str, Any]:
+    return {
+        "anomalies": [],
+        "anomaly_count": 0,
+        "summary": reason,
+        "_fallback": True,
+    }
+
+
+def _fallback_contradictions(n_statements: int, reason: str) -> dict[str, Any]:
+    return {
+        "contradictions": [],
+        "contradiction_count": 0,
+        "credibility_scores": [50.0] * max(0, n_statements),
+        "overall_credibility": 50.0,
+        "summary": reason,
+        "_fallback": True,
+    }
+
+
+def _fallback_leads(reason: str) -> dict[str, Any]:
+    return {
+        "leads": [],
+        "lead_count": 0,
+        "top_priority_lead": "",
+        "investigative_summary": reason,
+        "_fallback": True,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -74,12 +126,19 @@ Return ONLY a JSON object with exactly these keys:
   "rationale": "<two-sentence explanation>"
 }}
 """
-    resp = await get_llm_response(prompt)
-    raw_text = resp.get("response", "") if isinstance(resp, dict) else resp
-    result = _safe_json(raw_text)
-    logger.info("Risk score computed: overall=%.1f verdict=%s",
-                result.get("overall_risk", 0), result.get("verdict"))
-    return result
+    try:
+        resp = await get_llm_response(prompt)
+        raw_text = resp.get("response", "") if isinstance(resp, dict) else str(resp)
+        result = _parse_llm_object(raw_text)
+        logger.info(
+            "Risk score computed: overall=%.1f verdict=%s",
+            result.get("overall_risk", 0),
+            result.get("verdict"),
+        )
+        return result
+    except Exception as exc:
+        logger.warning("Risk score LLM/parse failed: %s", exc)
+        return _fallback_risk_score(case_data)
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +172,9 @@ async def detect_anomalies(
             "summary": str
         }
     """
+    if not evidence_items and not (report_text or "").strip():
+        return _fallback_anomalies("No evidence items or report text supplied.")
+
     prompt = f"""
 You are a forensic anomaly detection AI.
 
@@ -140,12 +202,20 @@ Return ONLY a JSON object:
   "summary": "<overall assessment in one sentence>"
 }}
 """
-    resp = await get_llm_response(prompt)
-    raw_text = resp.get("response", "") if isinstance(resp, dict) else resp
-    result = _safe_json(raw_text)
-    logger.info("Anomaly detection: %d anomaly/anomalies found",
-                result.get("anomaly_count", 0))
-    return result
+    try:
+        resp = await get_llm_response(prompt)
+        raw_text = resp.get("response", "") if isinstance(resp, dict) else str(resp)
+        result = _parse_llm_object(raw_text)
+        logger.info(
+            "Anomaly detection: %d anomaly/anomalies found",
+            result.get("anomaly_count", 0),
+        )
+        return result
+    except Exception as exc:
+        logger.warning("Anomaly detection LLM/parse failed: %s", exc)
+        return _fallback_anomalies(
+            "LLM unavailable or returned non-JSON; no anomalies computed."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -218,12 +288,21 @@ Return ONLY a JSON object:
   "summary": "<one-paragraph case assessment>"
 }}
 """
-    resp = await get_llm_response(prompt)
-    raw_text = resp.get("response", "") if isinstance(resp, dict) else resp
-    result = _safe_json(raw_text)
-    logger.info("Contradiction detection: %d found",
-                result.get("contradiction_count", 0))
-    return result
+    try:
+        resp = await get_llm_response(prompt)
+        raw_text = resp.get("response", "") if isinstance(resp, dict) else str(resp)
+        result = _parse_llm_object(raw_text)
+        logger.info(
+            "Contradiction detection: %d found",
+            result.get("contradiction_count", 0),
+        )
+        return result
+    except Exception as exc:
+        logger.warning("Contradiction detection LLM/parse failed: %s", exc)
+        return _fallback_contradictions(
+            len(statements),
+            "LLM unavailable or returned non-JSON; no contradictions computed.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -302,8 +381,16 @@ Return ONLY a JSON object:
   "investigative_summary": "<concise paragraph summarising the investigative direction>"
 }}
 """
-    resp = await get_llm_response(prompt)
-    raw_text = resp.get("response", "") if isinstance(resp, dict) else resp
-    result = _safe_json(raw_text)
-    logger.info("Lead recommendations generated: %d leads", result.get("lead_count", 0))
-    return result
+    try:
+        resp = await get_llm_response(prompt)
+        raw_text = resp.get("response", "") if isinstance(resp, dict) else str(resp)
+        result = _parse_llm_object(raw_text)
+        logger.info(
+            "Lead recommendations generated: %d leads", result.get("lead_count", 0)
+        )
+        return result
+    except Exception as exc:
+        logger.warning("Lead recommendations LLM/parse failed: %s", exc)
+        return _fallback_leads(
+            "LLM unavailable or returned non-JSON; no leads generated."
+        )

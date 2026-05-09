@@ -1,49 +1,46 @@
 @import 'tailwindcss';
 
-/* Forensix NEXUS-9 palette: obsidian navy, blood crimson, electric cyan */
+/* ForensiX NEXUS — cyber forensic luxury (#0a1428 navy, #00f5ff electric cyan, #991b1b crimson) */
 @theme inline {
   --font-sans: 'Inter', system-ui, sans-serif;
   --font-display: 'Space Grotesk', 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
-  --color-background: #030712;
-  --color-foreground: #c8d4e4;
-  --color-card: rgba(15, 23, 42, 0.72);
-  --color-card-foreground: #e8eef7;
-  --color-popover: #0f172a;
-  --color-popover-foreground: #e8eef7;
+  --color-background: #0a1428;
+  --color-foreground: #d4e4f7;
+  --color-card: rgba(12, 22, 48, 0.82);
+  --color-card-foreground: #eef6ff;
+  --color-popover: #0f1f3d;
+  --color-popover-foreground: #eef6ff;
 
-  --color-primary: #22d3ee;
-  --color-primary-foreground: #030712;
+  --color-primary: #00f5ff;
+  --color-primary-foreground: #041018;
 
   --color-secondary: #38bdf8;
-  --color-secondary-foreground: #030712;
+  --color-secondary-foreground: #041018;
 
-  --color-muted: #172554;
-  --color-muted-foreground: #8896ab;
+  --color-muted: #132744;
+  --color-muted-foreground: #8ba4c7;
 
   --color-accent: #991b1b;
   --color-accent-foreground: #fecaca;
 
-  --color-destructive: #dc2626;
-  --color-destructive-foreground: #fef2f2;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #fff1f2;
 
-  --color-border: rgba(148, 163, 184, 0.12);
-  --color-input: rgba(29, 39, 64, 0.8);
-  --color-ring: #22d3ee;
+  --color-border: rgba(0, 245, 255, 0.12);
+  --color-input: rgba(19, 39, 68, 0.92);
+  --color-ring: #00f5ff;
 
-  --color-crimson: #991b1b;
-  --color-obsidian: #020617;
+  --color-sidebar: rgba(10, 20, 40, 0.94);
+  --color-sidebar-foreground: #a8bddc;
+  --color-sidebar-primary: #00f5ff;
+  --color-sidebar-primary-foreground: #041018;
+  --color-sidebar-accent: rgba(0, 245, 255, 0.08);
+  --color-sidebar-accent-foreground: #b8fbff;
+  --color-sidebar-border: rgba(0, 245, 255, 0.1);
 
-  --color-sidebar: rgba(15, 23, 42, 0.92);
-  --color-sidebar-foreground: #aab8cf;
-  --color-sidebar-primary: #22d3ee;
-  --color-sidebar-primary-foreground: #030712;
-  --color-sidebar-accent: rgba(34, 211, 238, 0.09);
-  --color-sidebar-accent-foreground: #a5f3fc;
-  --color-sidebar-border: rgba(148, 163, 184, 0.12);
-
-  --color-chart-1: #22d3ee;
+  --color-chart-1: #00f5ff;
   --color-chart-2: #991b1b;
   --color-chart-3: #38bdf8;
   --color-chart-4: #a78bfa;
@@ -54,55 +51,44 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 
-  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  --shadow-neon-cyan: 0 0 24px rgba(34, 211, 238, 0.25);
+  --shadow-glass:
+    0 12px 48px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --shadow-neon-cyan: 0 0 32px rgba(0, 245, 255, 0.22);
 }
 
 :root {
-  --radius: 0.625rem;
+  --radius: 0.75rem;
+  --fx-navy: #0a1428;
+  --fx-obsidian: #050810;
+  --fx-cyan: #00f5ff;
+  --fx-crimson: #991b1b;
 
-  --background: #030712;
-  --foreground: #c8d4e4;
-
-  --card: rgba(15, 23, 42, 0.78);
-  --card-foreground: #e8eef7;
-
-  --popover: #0f172a;
-  --popover-foreground: #e8eef7;
-
-  --primary: #22d3ee;
-  --primary-foreground: #030712;
-
+  --background: #0a1428;
+  --foreground: #d4e4f7;
+  --card: rgba(12, 22, 48, 0.85);
+  --card-foreground: #eef6ff;
+  --popover: #0f1f3d;
+  --popover-foreground: #eef6ff;
+  --primary: #00f5ff;
+  --primary-foreground: #041018;
   --secondary: #38bdf8;
-  --secondary-foreground: #030712;
-
-  --muted: #172554;
-  --muted-foreground: #8896ab;
-
+  --secondary-foreground: #041018;
+  --muted: #132744;
+  --muted-foreground: #8ba4c7;
   --accent: #991b1b;
   --accent-foreground: #fecaca;
-
-  --destructive: #dc2626;
-  --destructive-foreground: #fef2f2;
-
-  --border: rgba(148, 163, 184, 0.14);
-  --input: rgba(29, 39, 64, 0.85);
-  --ring: #22d3ee;
-
-  --sidebar: rgba(15, 23, 42, 0.88);
-  --sidebar-foreground: #aab8cf;
-  --sidebar-primary: #22d3ee;
-  --sidebar-primary-foreground: #030712;
-  --sidebar-accent: rgba(34, 211, 238, 0.08);
-  --sidebar-accent-foreground: #a5f3fc;
-  --sidebar-border: rgba(148, 163, 184, 0.1);
+  --destructive: #ef4444;
+  --destructive-foreground: #fff1f2;
+  --border: rgba(0, 245, 255, 0.14);
+  --input: rgba(19, 39, 68, 0.92);
+  --ring: #00f5ff;
 }
 
 @layer base {
   * {
     @apply border-border;
     scrollbar-width: thin;
-    scrollbar-color: #1e293b #030712;
+    scrollbar-color: #1e3a5f #0a1428;
   }
 
   html {
@@ -111,10 +97,11 @@
   }
 
   body {
-    @apply min-h-dvh bg-background text-foreground selection:bg-primary/25 selection:text-primary;
-    font-feature-settings:
-      'ss01' 1,
-      'cv02' 1;
+    @apply min-h-dvh bg-background text-foreground selection:bg-primary/20 selection:text-primary;
+    background-image:
+      radial-gradient(ellipse 120% 80% at 50% -20%, rgba(0, 245, 255, 0.09), transparent),
+      radial-gradient(ellipse 80% 50% at 100% 50%, rgba(153, 27, 27, 0.06), transparent),
+      linear-gradient(180deg, #0a1428 0%, #050810 100%);
   }
 
   .font-display {
@@ -129,28 +116,27 @@
 
 @layer components {
   .glass-panel {
-    @apply backdrop-blur-xl rounded-xl shadow-[var(--shadow-glass)];
+    @apply backdrop-blur-2xl rounded-2xl border border-primary/15;
     background: linear-gradient(
-      135deg,
-      rgba(17, 24, 39, 0.85) 0%,
-      rgba(15, 23, 42, 0.55) 100%
+      145deg,
+      rgba(15, 31, 61, 0.92) 0%,
+      rgba(10, 20, 40, 0.72) 55%,
+      rgba(8, 14, 28, 0.85) 100%
     );
-    border: 1px solid rgba(34, 211, 238, 0.12);
+    box-shadow: var(--shadow-glass);
   }
 
-  /* Tailwind v4 cannot @apply other @layer components; mirror glass-panel explicitly. */
   .glass-panel-strong {
-    @apply backdrop-blur-xl rounded-xl;
+    @apply backdrop-blur-2xl rounded-2xl border border-primary/25;
     background: linear-gradient(
-      135deg,
-      rgba(17, 24, 39, 0.85) 0%,
-      rgba(15, 23, 42, 0.55) 100%
+      145deg,
+      rgba(18, 36, 72, 0.95) 0%,
+      rgba(10, 22, 44, 0.78) 100%
     );
-    border: 1px solid rgba(34, 211, 238, 0.25);
     box-shadow:
       var(--shadow-glass),
-      0 0 40px rgba(34, 211, 238, 0.06),
-      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      0 0 48px rgba(0, 245, 255, 0.07),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 
   .grid-overlay::before {
@@ -158,50 +144,40 @@
     pointer-events: none;
     position: absolute;
     inset: 0;
-    opacity: 0.05;
+    opacity: 0.055;
     background-image:
-      linear-gradient(rgba(34, 211, 238, 0.25) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(34, 211, 238, 0.25) 1px, transparent 1px);
-    background-size: 32px 32px;
+      linear-gradient(rgba(0, 245, 255, 0.2) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 245, 255, 0.2) 1px, transparent 1px);
+    background-size: 40px 40px;
   }
 
-  /* CRT-style scan overlay */
   .scanlines::after {
     content: '';
     pointer-events: none;
     position: fixed;
     inset: 0;
     z-index: 9998;
-    opacity: 0.04;
+    opacity: 0.035;
     mix-blend-mode: overlay;
-    background: repeating-linear-gradient(
-      transparent 0 2px,
-      rgba(0, 0, 0, 0.25) 2px 3px
-    );
+    background: repeating-linear-gradient(transparent 0 2px, rgba(0, 0, 0, 0.28) 2px 3px);
   }
 
-  .holo-edge {
-    position: relative;
+  .holo-ring {
+    box-shadow:
+      0 0 0 1px rgba(0, 245, 255, 0.25),
+      0 0 40px rgba(0, 245, 255, 0.08),
+      inset 0 0 24px rgba(153, 27, 27, 0.06);
   }
 
-  .holo-edge::before {
-    content: '';
-    position: absolute;
-    inset: -1px;
-    border-radius: inherit;
-    padding: 1px;
+  /* Tremor-style metric shell — avoid @apply custom classes (Tailwind v4) */
+  .metric-card {
+    @apply rounded-xl px-4 py-3 backdrop-blur-2xl border border-primary/15;
     background: linear-gradient(
-      120deg,
-      rgba(153, 27, 27, 0.9),
-      rgba(34, 211, 238, 0.7),
-      rgba(56, 189, 248, 0.5)
+      145deg,
+      rgba(15, 31, 61, 0.92) 0%,
+      rgba(10, 20, 40, 0.72) 55%,
+      rgba(8, 14, 28, 0.85) 100%
     );
-    -webkit-mask:
-      linear-gradient(#fff 0 0) content-box,
-      linear-gradient(#fff 0 0);
-    mask-composite: exclude;
-    -webkit-mask-composite: xor;
-    pointer-events: none;
-    opacity: 0.65;
+    box-shadow: var(--shadow-glass);
   }
 }

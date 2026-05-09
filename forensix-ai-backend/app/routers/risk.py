@@ -277,7 +277,29 @@ async def full_risk_analysis(request: FullRiskRequest):
 
     except Exception as exc:
         logger.exception("Full risk analysis pipeline failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Full risk analysis failed: {str(exc)}"
+        # Still return 200 with partial telemetry — avoids opaque 500s when LLM or JSON parsing flakes.
+        from app.services.risk_service import (
+            _fallback_anomalies,
+            _fallback_contradictions,
+            _fallback_leads,
+            _fallback_risk_score,
         )
+
+        case_stub = {
+            "report_text": request.report_text,
+            "statements": request.statements,
+            "evidence_summary": request.evidence_summary,
+            "timeline_events": request.timeline_events,
+        }
+        return {
+            "status": "partial",
+            "error": str(exc),
+            "data": {
+                "risk_score": _fallback_risk_score(case_stub),
+                "anomalies": _fallback_anomalies(str(exc)),
+                "contradictions": _fallback_contradictions(
+                    len(request.statements), str(exc)
+                ),
+                "leads": _fallback_leads(str(exc)),
+            },
+        }

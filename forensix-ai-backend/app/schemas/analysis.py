@@ -25,7 +25,7 @@ from enum import Enum
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, field_validator, model_validator  # top-level
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator  # top-level
 
 
 # =========================================================================== #
@@ -794,27 +794,71 @@ class ForensicAnalysisResponse(BaseModel):
 # ===========================================================================
 
 class AudioAnalysisResponse(BaseModel):
-    primary_emotion: str
-    emotion_confidence: float
-    all_emotions: list[dict[str, Any]]
-    stress_indicators: list[dict[str, Any]]
-    overall_assessment: str
+    """Matches analyze_audio_stress() — includes optional error-only payloads."""
+
+    model_config = ConfigDict(extra="allow")
+
+    primary_emotion: str = ""
+    emotion_confidence: float = 0.0
+    all_emotions: list[dict[str, Any]] = Field(default_factory=list)
+    stress_indicators: list[dict[str, Any]] = Field(default_factory=list)
+    overall_assessment: str = ""
+    error: Optional[str] = None
+
 
 class TranscriptionResponse(BaseModel):
-    transcription: str
+    model_config = ConfigDict(extra="allow")
+
+    transcription: str = ""
+    error: Optional[str] = None
+
 
 class TamperingResponse(BaseModel):
-    status: str
+    """Tampering / deepfake pipeline — many fields optional for graceful degradation."""
+
+    model_config = ConfigDict(extra="allow")
+
+    status: str = "ok"
+    error: Optional[str] = None
+    tampered: Optional[bool] = None
+    tampering_probability: Optional[float] = None
+    verdict: Optional[str] = None
+    indicators: Optional[list[str]] = None
+    advanced_vision_enabled: Optional[bool] = None
+
 
 class SegmentationResponse(BaseModel):
-    status: str
-    masks: list[Any]
+    model_config = ConfigDict(extra="allow")
+
+    status: str = "ok"
+    masks: list[Any] = Field(default_factory=list)
+    error: Optional[str] = None
+    mask_count: Optional[int] = None
+    image_dims: Optional[dict[str, Any]] = None
+    model_id: Optional[str] = None
+    device: Optional[str] = None
+    advanced_vision_enabled: Optional[bool] = None
+
 
 class PoseResponse(BaseModel):
-    status: str
-    keypoints: list[Any]
+    model_config = ConfigDict(extra="allow")
+
+    status: str = "ok"
+    keypoints: list[Any] = Field(default_factory=list)
+    error: Optional[str] = None
+    pose_summary: Optional[str] = None
+    defensive_wound_indicators: Optional[list[str]] = None
+    defensive_posture_score: Optional[float] = None
+    model_id: Optional[str] = None
+    device: Optional[str] = None
+    image_dims: Optional[dict[str, Any]] = None
+    advanced_vision_enabled: Optional[bool] = None
+
 
 class InconsistencyResponse(BaseModel):
-    status: str
-    inconsistencies: list[str]
+    model_config = ConfigDict(extra="allow")
+
+    status: str = "ok"
+    inconsistencies: list[str] = Field(default_factory=list)
+    error: Optional[str] = None
 

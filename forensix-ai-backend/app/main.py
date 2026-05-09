@@ -158,13 +158,19 @@ def create_app() -> FastAPI:
 def _add_middleware(app: FastAPI, settings) -> None:
 
     # 1. CORS — must be first so OPTIONS pre-flights are handled before auth
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
-        allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
-        allow_methods=settings.CORS_ALLOW_METHODS,
-        allow_headers=settings.CORS_ALLOW_HEADERS,
-    )
+    cors_kw: dict[str, Any] = {
+        "allow_origins": settings.CORS_ORIGINS,
+        "allow_credentials": settings.CORS_ALLOW_CREDENTIALS,
+        "allow_methods": settings.CORS_ALLOW_METHODS,
+        "allow_headers": settings.CORS_ALLOW_HEADERS,
+    }
+    # Long multipart inference requests often originate from any localhost port —
+    # allow_origin_regex picks them up even when VITE uses an uncommon dev port.
+    if settings.DEBUG:
+        cors_kw["allow_origin_regex"] = (
+            r"https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
+        )
+    app.add_middleware(CORSMiddleware, **cors_kw)
 
     # 2. Request-ID + process-time header
     @app.middleware("http")
@@ -254,6 +260,107 @@ def _add_exception_handlers(app: FastAPI) -> None:
 # System / meta endpoints
 # ────────────────────────────────────────────────────────────────────────────
 
+async def _readiness_report(settings) -> dict[str, Any]:
+    """Shared body for GET /ready and GET /api/v1/ready."""
+    import os
+
+    import httpx
+
+    from app.utils.hf_models import LAST_WARMUP
+
+    checks: dict[str, Any] = {}
+    warnings: list[str] = []
+    hints: list[str] = []
+
+    ollama_ok = False
+    try:
+        base = settings.OLLAMA_BASE_URL.rstrip("/")
+        async with httpx.AsyncClient(timeout=2.5) as client:
+            resp = await client.get(f"{base}/api/tags")
+            ollama_ok = resp.status_code == 200
+    except Exception:
+        ollama_ok = False
+    checks["ollama_reachable"] = ollama_ok
+
+    featherless_ok = bool(
+        settings.ENABLE_FEATHERLESS and settings.FEATHERLESS_API_KEY.strip()
+    )
+    checks["featherless_configured"] = featherless_ok
+
+    llm_ok = featherless_ok or ollama_ok
+    checks["llm_inference_ready"] = llm_ok
+
+    if settings.ENABLE_FEATHERLESS and not featherless_ok:
+        warnings.append("Featherless is enabled but FEATHERLESS_API_KEY is empty.")
+    if not featherless_ok and not ollama_ok:
+        warnings.append(
+            "No LLM path is ready: configure Featherless (API key) or start Ollama."
+        )
+        hints.append("Ollama: ollama serve  then  ollama pull llama3")
+
+    cache_dir = settings.hf_cache_path
+    cache_writable = os.access(cache_dir, os.W_OK)
+    checks["hf_cache_writable"] = cache_writable
+    checks["hf_cache_dir"] = str(cache_dir)
+    if not cache_writable:
+        warnings.append("HuggingFace cache directory is not writable.")
+
+    checks["advanced_vision_enabled"] = settings.ENABLE_ADVANCED_VISION
+    checks["audio_analysis_enabled"] = settings.ENABLE_AUDIO_ANALYSIS
+
+    vision_keys = (
+        "medsam2",
+        "vitpose",
+        "wound_classifier",
+        "med_ner",
+        "deepfake",
+    )
+    if settings.ENABLE_ADVANCED_VISION:
+        if not LAST_WARMUP:
+            checks["vision_warmup"] = "pending"
+            hints.append(
+                "Vision flag is on but warm-up map is empty — restart API after "
+                "ENABLE_ADVANCED_VISION=true or wait for first model load."
+            )
+        else:
+            bad = [
+                f"{k}: {LAST_WARMUP[k]}"
+                for k in vision_keys
+                if k in LAST_WARMUP and LAST_WARMUP[k] != "ok"
+            ]
+            checks["vision_warmup"] = "ok" if not bad else "degraded"
+            warnings.extend(bad)
+            if bad:
+                hints.append("Check server logs for HF hub, CUDA, and dependency errors.")
+    else:
+        checks["vision_warmup"] = "off"
+
+    if settings.ENABLE_AUDIO_ANALYSIS:
+        audio_st = LAST_WARMUP.get("audio")
+        if audio_st is None:
+            checks["audio_warmup"] = "pending"
+            hints.append("Audio flag is on — restart the API once so models can warm up.")
+        elif audio_st == "ok":
+            checks["audio_warmup"] = "ok"
+        else:
+            checks["audio_warmup"] = "error"
+            warnings.append(f"audio: {audio_st}")
+            hints.append("Verify librosa, torch, and Wav2Vec model downloads.")
+    else:
+        checks["audio_warmup"] = "off"
+
+    ready = bool(llm_ok and cache_writable)
+
+    return {
+        "status": "ready" if ready else "degraded",
+        "ready": ready,
+        "timestamp": _now(),
+        "checks": checks,
+        "warnings": warnings,
+        "hints": hints,
+    }
+
+
 def _add_system_routes(app: FastAPI, settings) -> None:
 
     @app.get(
@@ -292,13 +399,14 @@ def _add_system_routes(app: FastAPI, settings) -> None:
     )
     async def model_status_check():
         """Check which models are loaded and available."""
-        from app.utils.hf_models import _MODEL_CACHE
+        from app.utils.hf_models import LAST_WARMUP, _MODEL_CACHE
         return {
             "status": "ok",
             "llm_provider": "featherless" if settings.ENABLE_FEATHERLESS else "ollama",
             "vision_enabled": settings.ENABLE_ADVANCED_VISION,
             "audio_enabled": settings.ENABLE_AUDIO_ANALYSIS,
-            "loaded_hf_models": list(_MODEL_CACHE.keys()) if _MODEL_CACHE else []
+            "loaded_hf_models": list(_MODEL_CACHE.keys()) if _MODEL_CACHE else [],
+            "model_warmup": LAST_WARMUP,
         }
 
     @app.get(
@@ -337,6 +445,24 @@ def _add_system_routes(app: FastAPI, settings) -> None:
             },
             "timestamp": _now(),
         }
+
+    @app.get(
+        "/ready",
+        tags=["System"],
+        summary="Platform readiness — LLM gateway, cache, optional HF warm-up",
+        response_model=dict[str, Any],
+    )
+    async def readiness_probe_root():
+        return await _readiness_report(settings)
+
+    @app.get(
+        "/api/v1/ready",
+        tags=["System"],
+        summary="Same as /ready (versioned alias)",
+        response_model=dict[str, Any],
+    )
+    async def readiness_probe_v1():
+        return await _readiness_report(settings)
 
 
 # ────────────────────────────────────────────────────────────────────────────
