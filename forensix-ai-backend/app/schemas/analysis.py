@@ -93,6 +93,15 @@ class ConfidenceScore(BaseModel):
         return cls(score=round(score, 4), level=level)
 
 
+
+class Finding(BaseModel):
+    """A specific forensic finding or observation."""
+    label: str
+    description: str
+    severity: Severity = Severity.NONE
+    confidence: float = 1.0
+
+
 class DateTimeRange(BaseModel):
     """An inclusive time window with optional confidence."""
     earliest:   datetime
@@ -270,8 +279,8 @@ class AutopsyReportResponse(BaseModel):
     extraction_confidence: ConfidenceScore
     unextracted_sections:  list[str] = Field(default_factory=list,
         description="Sections the AI could not parse reliably")
-    raw_text_snippet:      Optional[str] = Field(None, max_length=1024,
-        description="First 1024 chars of extracted raw text for QA purposes")
+    raw_text_snippet:      Optional[str] = Field(None, max_length=8192,
+        description="Snippet of extracted raw text for geospatial/QA purposes")
     model_meta: Optional[AIModelMeta] = None
 
 
@@ -677,7 +686,17 @@ class EntityGraphResponse(BaseModel):
 
     narrative_summary: str = Field(..., max_length=2048)
     model_meta:        Optional[AIModelMeta] = None
-
+class EntityGraphResponse(BaseModel):
+    """Knowledge graph of forensic entities and their relationships."""
+    analysis_id:  UUID     = Field(default_factory=uuid4)
+    case_id:      UUID
+    analysed_at:  datetime = Field(default_factory=datetime.utcnow)
+    
+    entities:     list[dict[str, Any]] = Field(default_factory=list)
+    relationships: list[dict[str, Any]] = Field(default_factory=list)
+    entity_count: int = 0
+    relationship_count: int = 0
+    
     @model_validator(mode="after")
     def sync_counts(self) -> "EntityGraphResponse":
         self.entity_count       = len(self.entities)
@@ -719,6 +738,51 @@ class GeospatialAnalysisResponse(BaseModel):
 
     narrative_summary: str = Field(..., max_length=2048)
     model_meta:        Optional[AIModelMeta] = None
+
+
+
+class ToxicologyAnalysisResponse(BaseModel):
+    """Results from toxicology / chemical screening."""
+    analysis_id: UUID = Field(default_factory=uuid4)
+    case_id: UUID
+    status: str = "success"
+    substances_detected: list[dict[str, Any]] = Field(default_factory=list)
+    lethal_indicators: list[str] = Field(default_factory=list)
+    narrative_summary: str = ""
+
+class WoundAnalysisResponse(BaseModel):
+    """Specialised analysis of wounds, lacerations, and trauma markers."""
+    analysis_id: UUID = Field(default_factory=uuid4)
+    case_id: UUID
+    wounds: list[dict[str, Any]] = Field(default_factory=list)
+    total_wound_count: int = 0
+    primary_weapon_type: Optional[str] = None
+    narrative_summary: str = ""
+
+class BiometricAnalysisResponse(BaseModel):
+    """DNA matching, fingerprinting, and biometric identification."""
+    analysis_id: UUID = Field(default_factory=uuid4)
+    case_id: UUID
+    findings: list[dict[str, Any]] = Field(default_factory=list)
+    match_found: bool = False
+    narrative_summary: str = ""
+
+class TimelineResponse(BaseModel):
+    """Chronological sequence of forensic events."""
+    analysis_id: UUID = Field(default_factory=uuid4)
+    case_id: UUID
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    event_count: int = 0
+    narrative_summary: str = ""
+
+class RiskScoreResponse(BaseModel):
+    """Aggregated risk assessment and investigative prioritisation."""
+    analysis_id: UUID = Field(default_factory=uuid4)
+    case_id: UUID
+    overall_risk: float = 0.0
+    dimensions: dict[str, float] = Field(default_factory=dict)
+    verdict: str = "UNKNOWN"
+    rationale: str = ""
 
 
 # =========================================================================== #

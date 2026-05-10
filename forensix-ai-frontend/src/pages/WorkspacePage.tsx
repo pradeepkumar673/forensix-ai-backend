@@ -86,14 +86,14 @@ export default function WorkspacePage() {
     retry: false,
   })
 
-  const [blobText, setBlobText] = useState(
-    'Suspect arrived at warehouse 22:14. Victim discovered 23:02 with blunt cranial trauma.',
-  )
+  const [blobText, setBlobText] = useState('')
   const [audioFile, setAudioFile] = useState<File | null>(null)
 
   const timelineMut = useMutation({
     mutationFn: async () => {
-      const f = new File([blobText], 'timeline-src.txt', { type: 'text/plain' })
+      const text = blobText || combined.data?.autopsy_report?.raw_text_snippet || active?.summary
+      if (!text) throw new Error('No analysis data or manual text available to build timeline.')
+      const f = new File([text], 'timeline-src.txt', { type: 'text/plain' })
       return postTimeline([f], caseId)
     },
     onMutate: () => setScan(true),
@@ -107,7 +107,9 @@ export default function WorkspacePage() {
 
   const graphMut = useMutation({
     mutationFn: async () => {
-      const f = new File([blobText], 'graph-src.txt', { type: 'text/plain' })
+      const text = blobText || combined.data?.autopsy_report?.raw_text_snippet || active?.summary
+      if (!text) throw new Error('No analysis data or manual text available to build graph.')
+      const f = new File([text], 'graph-src.txt', { type: 'text/plain' })
       return buildKnowledgeGraph([f], caseId)
     },
     onMutate: () => setScan(true),
@@ -144,7 +146,7 @@ export default function WorkspacePage() {
   const riskMut = useMutation({
     mutationFn: () =>
       riskFull({
-        report_text: active?.summary ?? '',
+        report_text: active?.summary || execSummary || '',
         statements: [],
         evidence_summary: '',
         evidence_items: [],
@@ -173,7 +175,9 @@ export default function WorkspacePage() {
   }, [combined.data])
 
   const radarRows = useMemo(() => {
-    const rs = riskMut.data?.data?.risk_score as Record<string, unknown> | undefined
+    const d = riskMut.data as Record<string, unknown> | undefined
+    const rs = (d?.data as any)?.risk_score as Record<string, unknown> | undefined
+    
     if (!rs) {
       return [
         { k: 'Violence', v: 62 },
@@ -183,21 +187,33 @@ export default function WorkspacePage() {
         { k: 'Trajectory', v: 58 },
       ]
     }
-    const numericKeys = Object.entries(rs).filter(
+
+    // Try to find dimensions first
+    const dims = (rs.dimensions as Record<string, number>) || {}
+    const entries = Object.entries(dims).length > 0 ? Object.entries(dims) : Object.entries(rs)
+
+    const numericKeys = entries.filter(
       ([key, val]) =>
-        typeof val === 'number' && !['overall_risk_score', 'overall'].includes(key.toLowerCase()),
+        typeof val === 'number' && 
+        !['overall_risk_score', 'overall', 'overall_risk'].includes(key.toLowerCase()),
     )
+
     if (!numericKeys.length) {
-      return [{ k: 'Overall', v: Number(rs.overall_risk_score ?? rs.overall ?? 55) }]
+      return [{ k: 'Overall', v: Number(rs.overall_risk ?? rs.overall_risk_score ?? 55) }]
     }
-    return numericKeys.slice(0, 6).map(([k, v]) => ({ k: k.slice(0, 14), v: Number(v) }))
+
+    return numericKeys.slice(0, 6).map(([k, v]) => ({ 
+      k: k.replace(/_/g, ' ').slice(0, 14), 
+      v: Number(v) 
+    }))
   }, [riskMut.data])
 
   const timelineEvents = useMemo(() => {
     const t = timeline.data as Record<string, unknown> | undefined
-    const evs = (t?.events as Record<string, unknown>[]) ?? []
+    const inner = (t?.timeline as Record<string, unknown>) ?? t
+    const evs = (inner?.events as Record<string, unknown>[]) ?? []
     return evs.map((e) => ({
-      event_id: String(e.event_id ?? ''),
+      event_id: String(e.event_id ?? e.id ?? ''),
       description: String(e.description ?? ''),
       timestamp: e.timestamp ? String(e.timestamp) : null,
       event_type: String(e.event_type ?? ''),
@@ -206,7 +222,8 @@ export default function WorkspacePage() {
 
   const timelineContradictions = useMemo(() => {
     const t = timeline.data as Record<string, unknown> | undefined
-    const raw = (t?.contradictions as unknown[]) ?? []
+    const inner = (t?.timeline as Record<string, unknown>) ?? t
+    const raw = (inner?.contradictions as unknown[]) ?? []
     return raw.map((c) => (typeof c === 'string' ? c : JSON.stringify(c)))
   }, [timeline.data])
 
@@ -340,7 +357,13 @@ export default function WorkspacePage() {
               </Button>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Textarea rows={5} value={blobText} onChange={(e) => setBlobText(e.target.value)} className="font-mono text-xs" />
+              <Textarea
+                rows={5}
+                value={blobText}
+                onChange={(e) => setBlobText(e.target.value)}
+                className="font-mono text-xs bg-background/50"
+                placeholder="Enter manual narrative or use analyzed dossier text (automatic fallback)..."
+              />
               <TimelineVertical events={timelineEvents} contradictions={timelineContradictions} />
             </CardContent>
           </Card>
@@ -485,7 +508,7 @@ export default function WorkspacePage() {
           <div style={{ height: 640 }}>
             <ForensicMap
               caseId={caseId || 'default'}
-              reportText={blobText || active?.summary}
+              reportText={blobText || combined.data?.autopsy_report?.raw_text_snippet || active?.summary || ''}
               combinedAnalysis={combinedAnalysisText}
             />
           </div>

@@ -201,20 +201,38 @@ export async function uploadStatements(files: File[], onProgress?: (n: number) =
 
 // ── Analysis ─────────────────────────────────────────────────────────────────
 
-export async function analyzeReport(file: File, caseId: string) {
+export async function analyzeReport(file: File, caseId: string, onProgress?: (n: number) => void) {
   const fd = new FormData()
   fd.append('file', file)
   const { data } = await v1
-    .post('/analyze/report', fd, { params: { case_id: caseId } })
+    .post('/analyze/report', fd, { 
+      params: { case_id: caseId },
+      onUploadProgress: (ev) => {
+        if (ev.total && onProgress) onProgress(Math.round((ev.loaded / ev.total) * 100))
+      },
+    })
     .catch(unpack)
   return data
 }
 
-export async function analyzeImages(files: File[], caseId: string) {
+export async function analyzeImages(files: File[], caseId: string, onProgress?: (n: number) => void) {
   const fd = new FormData()
   files.forEach((f) => fd.append('files', f))
   const { data } = await v1
-    .post('/analyze/images', fd, { params: { case_id: caseId } })
+    .post('/analyze/images', fd, { 
+      params: { case_id: caseId },
+      onUploadProgress: (ev) => {
+        if (ev.total && onProgress) onProgress(Math.round((ev.loaded / ev.total) * 100))
+      },
+    })
+    .catch(unpack)
+  return data
+}
+
+/** Extract geospatial 'lattice' nodes from report text */
+export async function analyzeGeospatial(caseId: string, reportText: string) {
+  const { data } = await v1
+    .post('/analyze/geospatial', { report_text: reportText }, { params: { case_id: caseId } })
     .catch(unpack)
   return data
 }

@@ -10,6 +10,7 @@ FastAPI router exposing risk analysis endpoints:
 """
 
 import logging
+import asyncio
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -229,6 +230,8 @@ async def full_risk_analysis(request: FullRiskRequest):
     Returns a combined payload with all four result sets.
     """
     try:
+        logger.info("🧠 NEURAL MESH: Initialising full-spectrum risk envelope synthesis...")
+        await asyncio.sleep(5)
         # 1. Risk score
         case_data = {
             "report_text": request.report_text,

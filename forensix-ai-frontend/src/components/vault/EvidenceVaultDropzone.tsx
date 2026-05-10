@@ -1,10 +1,12 @@
 import { useCallback, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { CloudUpload, FileAudio, FileImage, FileText, Loader2, Shield } from 'lucide-react'
-import { uploadDigitalEvidence, uploadImages, uploadReport, uploadStatements } from '@/lib/api'
+import { analyzeImages, analyzeReport, uploadDigitalEvidence, uploadImages, uploadReport, uploadStatements } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { toast } from 'sonner'
+import { useQueryClient } from '@tanstack/react-query'
+import { qk } from '@/lib/query-keys'
 import { cn } from '@/lib/utils'
 
 type Props = {
@@ -16,6 +18,7 @@ export function EvidenceVaultDropzone({ caseId }: Props) {
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
+  const queryClient = useQueryClient()
 
   const ingest = useCallback(
     async (files: FileList | File[]) => {
@@ -44,17 +47,18 @@ export function EvidenceVaultDropzone({ caseId }: Props) {
         )
 
         if (imgs.length) {
-          await uploadImages(imgs, (p) => setProgress(10 + p * 0.25))
-          toast.success(`${imgs.length} optical capture(s) sealed`)
+          await analyzeImages(imgs, caseId, (p) => setProgress(10 + p * 0.25))
+          toast.success(`${imgs.length} optical capture(s) sealed and analysed`)
         }
         if (reports.length) {
           for (let i = 0; i < reports.length; i++) {
             const f = reports[i]!
-            await uploadReport(f, (p) =>
+            // Trigger analysis instead of simple upload so results are available in the workspace
+            await analyzeReport(f, caseId, (p) =>
               setProgress(40 + ((i + p / 100) / reports.length) * 18),
             )
           }
-          toast.success(`${reports.length} narrative artefact(s) vaulted`)
+          toast.success(`${reports.length} narrative artefact(s) vaulted and analysed`)
         }
         if (digital.length) {
           await uploadDigitalEvidence(digital, (p) => setProgress(60 + p * 0.2))
@@ -64,6 +68,12 @@ export function EvidenceVaultDropzone({ caseId }: Props) {
           toast.message('Audio routed via statements vault adapter — transcribe in workspace.')
           await uploadStatements(audio, (p) => setProgress(80 + p * 0.15))
         }
+
+        // Invalidate queries so workspace picks up new data
+        queryClient.invalidateQueries({ queryKey: qk.combined(caseId) })
+        queryClient.invalidateQueries({ queryKey: qk.timeline(caseId) })
+        queryClient.invalidateQueries({ queryKey: qk.graph(caseId) })
+
         setProgress(100)
       } catch (e: unknown) {
         toast.error(e instanceof Error ? e.message : 'Vault ingest fault')

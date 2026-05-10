@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { analyzeGeospatial } from '@/lib/api'
 import {
   MapContainer,
   TileLayer,
@@ -121,64 +122,8 @@ function makeIcon(type: LocationType, pulse = false) {
   })
 }
 
-// ─── LLM Location Extraction ──────────────────────────────────────────────────
-
-const EXTRACTION_SYSTEM_PROMPT = `You are a forensic geospatial intelligence analyst. Given a forensic case report or autopsy document, extract all real-world locations mentioned and generate additional contextually relevant investigative locations.
-
-Return ONLY a valid JSON array (no markdown, no backticks) with this exact schema:
-[
-  {
-    "id": "unique-string",
-    "name": "Location name",
-    "description": "Detailed description relevant to the investigation",
-    "lat": 0.000000,
-    "lng": 0.000000,
-    "type": "crime_scene|body_discovery|witness|suspect|vehicle|cctv|hospital|escape_route|custom",
-    "confidence": 85,
-    "extractedFrom": "Direct quote or inference note",
-    "timestamp": "ISO-8601 or null"
-  }
-]
-
-Rules:
-1. Extract every location explicitly or implicitly mentioned (streets, districts, hospitals, warehouses, etc.)
-2. Generate 3–5 ADDITIONAL investigative points that a detective WOULD CHECK: nearest CCTV coverage zones, likely vehicle staging areas, nearest hospital/morgue, escape route corridors, suspect's likely operational base.
-3. If no coordinates are extractable, make REALISTIC estimates near the jurisdiction center and clearly mark them as estimated in the description.
-4. Always include at least one crime_scene, one body_discovery (if different), and one escape_route.
-5. Confidence: 90–100 = explicitly stated, 60–89 = strongly implied, 30–59 = inferred, <30 = speculative.
-6. Return 5–10 total locations.`
-
-async function extractLocationsViaLLM(
-  reportText: string,
-  jurisdiction: string,
-): Promise<ForensicPin[]> {
-  const userPrompt = `
-JURISDICTION: ${jurisdiction}
-CASE REPORT:
-${reportText.slice(0, 6000)}
-
-Extract and generate forensic geospatial intelligence points for this case. Be precise and realistic.`
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2000,
-      system: EXTRACTION_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }],
-    }),
-  })
-
-  if (!response.ok) throw new Error(`LLM API error: ${response.status}`)
-  const data = await response.json()
-  const raw = data.content?.find((b: { type: string }) => b.type === 'text')?.text ?? '[]'
-
-  // Strip any accidental markdown fences
-  const clean = raw.replace(/```json|```/g, '').trim()
-  const pins = JSON.parse(clean) as ForensicPin[]
-  return pins.map((p, i) => ({ ...p, id: p.id ?? `llm-${i}` }))
-}
+// REMOVED direct Anthropic fetch to avoid CORS blockers. 
+// Logic moved to Backend via analyzeGeospatial().
 
 // ─── Map Centre Fly ───────────────────────────────────────────────────────────
 
@@ -262,7 +207,18 @@ export function ForensicMap({ caseId, reportText = '', combinedAnalysis = '' }: 
     }
     setIsExtracting(true)
     try {
-      const extracted = await extractLocationsViaLLM(text, 'India')
+      const data = await analyzeGeospatial(caseId, text)
+      const extracted: ForensicPin[] = data.points.map((p: any) => ({
+        id: p.point_id,
+        name: p.label,
+        description: p.description,
+        lat: p.latitude,
+        lng: p.longitude,
+        type: p.point_type,
+        confidence: p.confidence?.score ? Math.round(p.confidence.score * 100) : 85,
+        timestamp: p.timestamp
+      }))
+      
       setPins(extracted)
       const primary = extracted.find((p) => p.type === 'crime_scene') ?? extracted[0]
       if (primary) {
