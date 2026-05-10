@@ -24,7 +24,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, time as dt_time, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -39,14 +39,9 @@ from app.schemas.analysis import (
     TimelineResponse,
     AIModelMeta,
 )
+from app.services.llm_service import get_llm_response
 
 logger = logging.getLogger(__name__)
-
-# --------------------------------------------------------------------------- #
-# Constants                                                                     #
-# --------------------------------------------------------------------------- #
-
-_DEFAULT_MODEL = "qwen3:14b"
 
 # --------------------------------------------------------------------------- #
 # Internal helpers                                                              #
@@ -90,7 +85,7 @@ def _extract_json_block(text: str) -> Any:
 
 async def _call_ollama(
     prompt: str,
-    model: str = _DEFAULT_MODEL,
+    model: str | None = None,
     system: str | None = None,
     temperature: float = 0.1,
     max_tokens: int = 4096,
@@ -101,8 +96,9 @@ async def _call_ollama(
 
     Returns (response_text, inference_ms).
     """
+    mdl = model or _settings().OLLAMA_MODEL
     payload: dict[str, Any] = {
-        "model":   model,
+        "model":   mdl,
         "prompt":  prompt,
         "stream":  False,
         "options": {
@@ -355,52 +351,147 @@ def _dict_to_timeline_event(raw: dict[str, Any]) -> TimelineEvent:
     )
 
 
-# --------------------------------------------------------------------------- #
-# Public API                                                                    #
-# --------------------------------------------------------------------------- #
-
-async def extract_events_from_text(
-    text:  str,
-    model: str = _DEFAULT_MODEL,
-) -> list[dict[str, Any]]:
+def _extract_events_heuristic(text: str) -> list[dict[str, Any]]:
     """
-    Extract temporally anchored events from any forensic evidence text.
-
-    Parameters
-    ----------
-    text  : Raw or cleaned text from a document (autopsy report, police report,
-            witness statement, digital log, etc.)
-    model : Ollama model tag.
-
-    Returns
-    -------
-    List of raw event dicts (not yet converted to schema objects).
-    Each dict contains: event_type, timestamp, description, source, actors,
-    confidence, notes.
-
-    Raises
-    ------
-    RuntimeError : If the Ollama server is unreachable.
-    ValueError   : If the LLM output cannot be parsed as JSON.
+    Regex-based event extraction when Ollama is unavailable (OOM, offline, etc.).
+    Pulls ISO timestamps and HH:MM patterns so POST /correlate/timeline can succeed on thin hardware.
     """
-    if not text or not text.strip():
-        raise ValueError("text must be a non-empty string")
+    text = text.strip()
+    if not text:
+        return []
 
-    # Truncate very long documents to avoid context overflow
-    max_chars = 10_000
-    truncated = len(text) > max_chars
-    source_text = text[:max_chars] + ("\n\n[TRUNCATED]" if truncated else "")
+    events: list[dict[str, Any]] = []
+    seen_ts: set[str] = set()
 
-    prompt = _EXTRACT_EVENTS_PROMPT.format(text=source_text)
+    iso_pat = re.compile(
+        r"\b(\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?)\b"
+    )
+    for m in iso_pat.finditer(text):
+        raw_ts = m.group(1).replace(" ", "T")
+        if "T" not in raw_ts:
+            raw_ts = f"{raw_ts}T00:00:00"
+        if raw_ts in seen_ts:
+            continue
+        seen_ts.add(raw_ts)
+        start = max(0, m.start() - 100)
+        end = min(len(text), m.end() + 120)
+        snippet = text[start:end].replace("\n", " ").strip()
+        events.append(
+            {
+                "event_type": "other",
+                "timestamp": raw_ts if raw_ts.endswith("Z") or "+" in raw_ts else raw_ts + "+00:00",
+                "description": snippet,
+                "source": "heuristic_iso_timestamp",
+                "actors": [],
+                "confidence": 0.48,
+                "notes": "Regex ISO anchor — not LLM-verified.",
+            }
+        )
 
-    response_text, inference_ms = await _call_ollama(
-        prompt=prompt,
-        model=model,
-        system=_TIMELINE_SYSTEM_PROMPT,
-        temperature=0.05,
-        max_tokens=4096,
+    base_date = date.today()
+    dm = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", text)
+    if dm:
+        base_date = date(int(dm.group(1)), int(dm.group(2)), int(dm.group(3)))
+
+    time_pat = re.compile(
+        r"\b(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(?:hrs?|hours?|h\b))?\b",
+        re.I,
+    )
+    for m in time_pat.finditer(text):
+        hh, mm = int(m.group(1)), int(m.group(2))
+        ss = int(m.group(3) or 0)
+        if hh > 23 or mm > 59 or ss > 59:
+            continue
+        ts = datetime.combine(base_date, dt_time(hour=hh, minute=mm, second=ss), tzinfo=timezone.utc)
+        key = ts.isoformat()
+        if key in seen_ts:
+            continue
+        seen_ts.add(key)
+        start = max(0, m.start() - 100)
+        end = min(len(text), m.end() + 120)
+        snippet = text[start:end].replace("\n", " ").strip()
+        events.append(
+            {
+                "event_type": "witness_account",
+                "timestamp": ts.isoformat(),
+                "description": snippet,
+                "source": "heuristic_clock_time",
+                "actors": [],
+                "confidence": 0.44,
+                "notes": "Time derived from HH:MM in narrative; date from first YYYY-MM-DD or today.",
+            }
+        )
+
+    if not events:
+        events.append(
+            {
+                "event_type": "other",
+                "timestamp": _utcnow().isoformat(),
+                "description": text[:1800],
+                "source": "heuristic_whole_document",
+                "actors": [],
+                "confidence": 0.32,
+                "notes": "No explicit time pattern — single narrative bucket; manual review required.",
+            }
+        )
+
+    return events
+
+
+def _build_timeline_heuristic(
+    events_raw: list[dict[str, Any]],
+    case_id: UUID,
+    context: str,
+) -> TimelineResponse:
+    """Sort and package raw events without a second LLM pass (OOM-safe)."""
+    timeline_events: list[TimelineEvent] = []
+    for raw in events_raw:
+        try:
+            timeline_events.append(_dict_to_timeline_event(raw))
+        except Exception as exc:
+            logger.warning("Heuristic timeline: skipping malformed event %s — %s", raw, exc)
+
+    def sort_key(e: TimelineEvent):
+        if e.timestamp:
+            return e.timestamp
+        if e.time_window and e.time_window.earliest:
+            return e.time_window.earliest
+        return _utcnow()
+
+    timeline_events.sort(key=sort_key)
+    narrative = (
+        f"Degraded timeline merge ({len(timeline_events)} events). "
+        f"{context or ''} "
+        "Neural synthesis was skipped or failed (often insufficient RAM for the configured Ollama model). "
+        "Validate every timestamp against original evidence."
+    ).strip()[:4096]
+
+    return TimelineResponse(
+        case_id=case_id,
+        events=timeline_events,
+        gaps_identified=[
+            "Automated gap analysis requires LLM — not run in heuristic mode.",
+        ],
+        contradictions=[],
+        narrative_summary=narrative,
+        overall_confidence=_make_confidence(0.42),
+        model_meta=AIModelMeta(model_name="heuristic-merge", inference_ms=0),
     )
 
+
+async def _llm_extract_events(source_text: str, model: str | None = None) -> list[dict[str, Any]]:
+    prompt = _EXTRACT_EVENTS_PROMPT.format(text=source_text)
+    response_dict = await get_llm_response(
+        prompt=prompt,
+        model=model,
+        system_prompt=_TIMELINE_SYSTEM_PROMPT,
+        temperature=0.05,
+        max_tokens=4096,
+        provider="auto",
+    )
+    response_text = response_dict["response"]
+    usage = response_dict["usage"]
+    inference_ms = usage.get("eval_duration_ms", 0)
     try:
         parsed = _extract_json_block(response_text)
     except (json.JSONDecodeError, ValueError) as exc:
@@ -409,19 +500,71 @@ async def extract_events_from_text(
             f"LLM did not return valid JSON for event extraction.\n"
             f"Raw response (first 400 chars):\n{response_text[:400]}"
         ) from exc
-
     events = parsed.get("events", [])
     logger.info(
-        "Extracted %d events from text (%d chars) in %d ms",
-        len(events), len(text), inference_ms,
+        "Extracted %d events via model=%s (%d chars) in %d ms",
+        len(events), model, len(source_text), inference_ms,
     )
     return events
+
+
+# --------------------------------------------------------------------------- #
+# Public API                                                                    #
+# --------------------------------------------------------------------------- #
+
+async def extract_events_from_text(
+    text:  str,
+    model: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Extract temporally anchored events from any forensic evidence text.
+
+    Never raises for OOM / offline / LLM failures: falls back to regex + narrative
+    heuristics so ``POST /correlate/timeline`` always receives at least one anchor.
+
+    Raises
+    ------
+    ValueError : Only if ``text`` is empty.
+    """
+    if not text or not text.strip():
+        raise ValueError("text must be a non-empty string")
+
+    max_chars = 10_000
+    truncated = len(text) > max_chars
+    source_text = text[:max_chars] + ("\n\n[TRUNCATED]" if truncated else "")
+
+    primary = model or _settings().OLLAMA_MODEL
+    fallback = (_settings().OLLAMA_FALLBACK_MODEL or "").strip()
+
+    try:
+        return await _llm_extract_events(source_text, model)
+    except Exception as exc:
+        logger.warning("Timeline LLM extract failed: %s", exc)
+
+    # Always succeed without Ollama (OOM-safe demo / thin hardware).
+    if _settings().USE_TIMELINE_HEURISTIC_FALLBACK:
+        ev = _extract_events_heuristic(text)
+        logger.info("Heuristic timeline extract produced %d events (LLM skipped or failed)", len(ev))
+        return ev
+
+    # Misconfigured env: still do not fail the API — minimal synthetic anchor.
+    return [
+        {
+            "event_type": "other",
+            "timestamp": _utcnow().isoformat(),
+            "description": text[:1800],
+            "source": "continuity_fallback",
+            "actors": [],
+            "confidence": 0.25,
+            "notes": "USE_TIMELINE_HEURISTIC_FALLBACK=false — minimal stub event.",
+        }
+    ]
 
 
 async def build_timeline(
     events_raw: list[dict[str, Any]],
     context:    str = "",
-    model:      str = _DEFAULT_MODEL,
+    model:      str | None = None,
     case_id:    UUID | None = None,
 ) -> TimelineResponse:
     """
@@ -452,80 +595,82 @@ async def build_timeline(
     if case_id is None:
         case_id = uuid4()
 
-    events_json = json.dumps(events_raw, indent=2, default=str)
+    primary = model or _settings().OLLAMA_MODEL
+    fallback = (_settings().OLLAMA_FALLBACK_MODEL or "").strip()
 
+    events_json = json.dumps(events_raw, indent=2, default=str)
     prompt = _BUILD_TIMELINE_PROMPT.format(
         context     = context or "No additional context provided.",
-        events_json = events_json[:14_000],   # cap to avoid token overflow
+        events_json = events_json[:14_000],
     )
 
-    t0 = time.perf_counter()
-    response_text, inference_ms = await _call_ollama(
-        prompt=prompt,
-        model=model,
-        system=_TIMELINE_SYSTEM_PROMPT,
-        temperature=0.05,
-        max_tokens=6000,
-    )
+    async def _llm_merge(m: str | None) -> TimelineResponse:
+        response_dict = await get_llm_response(
+            prompt=prompt,
+            model=m,
+            system_prompt=_TIMELINE_SYSTEM_PROMPT,
+            temperature=0.05,
+            max_tokens=6000,
+            provider="auto",
+        )
+        response_text = response_dict["response"]
+        usage = response_dict["usage"]
+        inference_ms = usage.get("eval_duration_ms", 0)
+        actual_model = response_dict["model"]
+        parsed = _extract_json_block(response_text)
+        timeline_events: list[TimelineEvent] = []
+        for raw_event in parsed.get("events", []):
+            try:
+                timeline_events.append(_dict_to_timeline_event(raw_event))
+            except Exception as e:
+                logger.warning("Skipping malformed event dict: %s — %s", raw_event, e)
+
+        def sort_key(e: TimelineEvent):
+            if e.timestamp:
+                return e.timestamp
+            if e.time_window and e.time_window.earliest:
+                return e.time_window.earliest
+            return _utcnow()
+
+        timeline_events.sort(key=sort_key)
+
+        logger.info(
+            "Built timeline: %d events, %d gaps, %d contradictions in %d ms",
+            len(timeline_events),
+            len(parsed.get("gaps_identified", [])),
+            len(parsed.get("contradictions", [])),
+            inference_ms,
+        )
+
+        return TimelineResponse(
+            case_id            = case_id,
+            events             = timeline_events,
+            gaps_identified    = parsed.get("gaps_identified", []),
+            contradictions     = parsed.get("contradictions", []),
+            narrative_summary  = parsed.get(
+                "narrative_summary",
+                "Timeline reconstruction completed.",
+            ),
+            overall_confidence = _make_confidence(
+                parsed.get("overall_confidence", 0.65)
+            ),
+            model_meta = AIModelMeta(
+                model_name   = actual_model,
+                inference_ms = inference_ms,
+            ),
+        )
 
     try:
-        parsed = _extract_json_block(response_text)
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.error("Timeline build JSON parse failure: %s", exc)
-        raise ValueError(
-            f"LLM did not return valid JSON for timeline reconstruction.\n"
-            f"Raw response (first 400 chars):\n{response_text[:400]}"
-        ) from exc
-
-    # Convert raw event dicts → TimelineEvent schema objects
-    timeline_events: list[TimelineEvent] = []
-    for raw_event in parsed.get("events", []):
-        try:
-            timeline_events.append(_dict_to_timeline_event(raw_event))
-        except Exception as e:
-            logger.warning("Skipping malformed event dict: %s — %s", raw_event, e)
-
-    # Sort events: confirmed timestamps first, then by earliest window bound
-    def sort_key(e: TimelineEvent):
-        if e.timestamp:
-            return e.timestamp
-        if e.time_window and e.time_window.earliest:
-            return e.time_window.earliest
-        return _utcnow()   # put un-anchored events at the end
-
-    timeline_events.sort(key=sort_key)
-
-    logger.info(
-        "Built timeline: %d events, %d gaps, %d contradictions in %d ms",
-        len(timeline_events),
-        len(parsed.get("gaps_identified", [])),
-        len(parsed.get("contradictions", [])),
-        inference_ms,
-    )
-
-    return TimelineResponse(
-        case_id            = case_id,
-        events             = timeline_events,
-        gaps_identified    = parsed.get("gaps_identified", []),
-        contradictions     = parsed.get("contradictions", []),
-        narrative_summary  = parsed.get(
-            "narrative_summary",
-            "Timeline reconstruction completed.",
-        ),
-        overall_confidence = _make_confidence(
-            parsed.get("overall_confidence", 0.65)
-        ),
-        model_meta = AIModelMeta(
-            model_name   = model,
-            inference_ms = inference_ms,
-        ),
-    )
+        return await _llm_merge(model)
+    except Exception as exc:
+        logger.warning("build_timeline failed: %s", exc)
+    return _build_timeline_heuristic(events_raw, case_id, context)
 
 
 async def detect_timeline_contradictions(
     events:          list[dict[str, Any]],
     statements_text: str,
-    model:           str = _DEFAULT_MODEL,
+    model:           str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Detect contradictions between reconstructed timeline events and witness /
@@ -557,13 +702,21 @@ async def detect_timeline_contradictions(
         statements_text = statements_text[:8_000],
     )
 
-    response_text, inference_ms = await _call_ollama(
-        prompt=prompt,
-        model=model,
-        system=_TIMELINE_SYSTEM_PROMPT,
-        temperature=0.05,
-        max_tokens=3000,
-    )
+    try:
+        response_dict = await get_llm_response(
+            prompt=prompt,
+            model=model,
+            system_prompt=_TIMELINE_SYSTEM_PROMPT,
+            temperature=0.05,
+            max_tokens=3000,
+            provider="auto",
+        )
+        response_text = response_dict["response"]
+        usage = response_dict["usage"]
+        inference_ms = usage.get("eval_duration_ms", 0)
+    except Exception as exc:
+        logger.warning("Contradiction detection skipped (LLM failed): %s", exc)
+        return []
 
     try:
         parsed = _extract_json_block(response_text)

@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     APP_DESCRIPTION: str = Field(
         default=(
             "Backend API for the Forensix AI analysis platform — "
-            "combining Ollama LLM inference with advanced HuggingFace "
+            "combining Groq/Featherless LLM inference with advanced HuggingFace "
             "forensic computer-vision models."
         ),
         description="Short description shown in the OpenAPI docs",
@@ -69,8 +69,12 @@ class Settings(BaseSettings):
     CORS_ALLOW_HEADERS: list[str] = Field(default=["*"])
 
     # ------------------------------------------------------------------ #
-    # Ollama / LLM  (existing — unchanged)                                #
+    # Ollama / LLM                                                         #
     # ------------------------------------------------------------------ #
+    ENABLE_OLLAMA: bool = Field(
+        default=True,
+        description="Enable local Ollama server for text/vision inference",
+    )
     OLLAMA_BASE_URL: str = Field(
         default="http://localhost:11434",
         description="Base URL of the local Ollama server",
@@ -82,6 +86,17 @@ class Settings(BaseSettings):
     OLLAMA_VISION_MODEL: str = Field(
         default="llava-llama3",
         description="Default Ollama model used for vision inference",
+    )
+    OLLAMA_FALLBACK_MODEL: str = Field(
+        default="tinyllama",
+        description=(
+            "Small Ollama model when the primary fails with OOM or HTTP 500. "
+            "Example: ollama pull tinyllama  (~600MB) or phi3:mini"
+        ),
+    )
+    USE_TIMELINE_HEURISTIC_FALLBACK: bool = Field(
+        default=True,
+        description="If true, derive timeline events from date/time regex when Ollama fails",
     )
 
     # ------------------------------------------------------------------ #
@@ -102,6 +117,26 @@ class Settings(BaseSettings):
     FEATHERLESS_MODEL: str = Field(
         default="meta-llama/Meta-Llama-3-70B-Instruct",
         description="Default Featherless model",
+    )
+
+    # ------------------------------------------------------------------ #
+    # Groq AI                                                            #
+    # ------------------------------------------------------------------ #
+    ENABLE_GROQ: bool = Field(
+        default=True,
+        description="Enable Groq AI as the primary cloud LLM provider",
+    )
+    GROQ_API_KEY: str = Field(
+        default="",
+        description="Groq AI API Key",
+    )
+    GROQ_BASE_URL: str = Field(
+        default="https://api.groq.com/openai/v1",
+        description="Groq AI base URL",
+    )
+    GROQ_MODEL: str = Field(
+        default="llama-3.3-70b-versatile",
+        description="Default Groq model",
     )
 
 

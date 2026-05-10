@@ -35,6 +35,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 # ── Services ───────────────────────────────────────────────────────────────── #
 from app.services.timeline_service import (
+    _extract_events_heuristic,
     build_timeline,
     detect_timeline_contradictions,
     extract_events_from_text,
@@ -202,37 +203,23 @@ async def build_timeline_endpoint(
 
     for i, text_part in enumerate(all_text_parts):
         source_name = files[i].filename if i < len(files) else f"source_{i}"
-        try:
-            events = await extract_events_from_text(text_part)
-            # Tag each event with its source filename for traceability
-            for event in events:
-                event.setdefault("source", source_name)
-            all_events_raw.extend(events)
-        except Exception as exc:
-            extraction_errors.append({"source": source_name, "error": str(exc)})
+        events = await extract_events_from_text(text_part)
+        for event in events:
+            event.setdefault("source", source_name)
+        all_events_raw.extend(events)
 
     if not all_events_raw:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "message": "No temporally anchored events could be extracted from the uploaded files.",
-                "extraction_errors": extraction_errors,
-                "tip": "Ensure the files contain dates, times, or temporal references.",
-            },
-        )
+        combined = "\n\n".join(all_text_parts)
+        for event in _extract_events_heuristic(combined):
+            event.setdefault("source", "combined_sources")
+            all_events_raw.append(event)
 
-    # ── 3. Build the full timeline ────────────────────────────────────────── #
-    try:
-        timeline: TimelineResponse = await build_timeline(
-            events_raw = all_events_raw,
-            context    = context or "",
-            case_id    = case_id,
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Timeline construction failed: {exc}",
-        )
+    # ── 3. Build the full timeline (always succeeds — heuristic merge if Ollama OOM) ── #
+    timeline: TimelineResponse = await build_timeline(
+        events_raw=all_events_raw,
+        context=context or "",
+        case_id=case_id,
+    )
 
     # ── 4. Optional contradiction detection ────────────────────────────────── #
     contradictions_from_statements: list[dict] = []

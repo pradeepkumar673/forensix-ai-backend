@@ -62,6 +62,10 @@ class FeatherlessAPIError(RuntimeError):
     """Raised when the Featherless API returns an error."""
 
 
+class GroqAPIError(RuntimeError):
+    """Raised when the Groq API returns an error."""
+
+
 class LLMParseError(ValueError):
     """Raised when the model response cannot be parsed into the expected structure."""
 
@@ -269,6 +273,74 @@ async def _call_featherless(
     return response_text, usage_stats
 
 
+async def _call_groq(
+    prompt: str,
+    model: str,
+    system_prompt: str | None = None,
+    temperature: float = 0.1,
+    max_tokens: int = 4096,
+    timeout: float = 60.0,
+) -> tuple[str, dict[str, Any]]:
+    """
+    Low-level async call to Groq AI via the OpenAI-compatible client.
+    """
+    settings = _settings()
+
+    if not settings.ENABLE_GROQ:
+        raise GroqAPIError(
+            "Groq AI is disabled. Set ENABLE_GROQ=true and "
+            "GROQ_API_KEY in your .env to enable it."
+        )
+
+    if not settings.GROQ_API_KEY:
+        raise GroqAPIError(
+            "GROQ_API_KEY is not set. Cannot call Groq AI."
+        )
+
+    client = AsyncOpenAI(
+        api_key=settings.GROQ_API_KEY,
+        base_url=settings.GROQ_BASE_URL,
+        timeout=timeout,
+    )
+
+    messages: Any = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    t0 = time.perf_counter()
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    except Exception as exc:
+        raise GroqAPIError(
+            f"Groq API call failed for model '{model}': {exc}"
+        ) from exc
+
+    elapsed = time.perf_counter() - t0
+    response_text: str = response.choices[0].message.content or ""
+    usage_stats: dict[str, Any] = {
+        "prompt_eval_count": getattr(response.usage, "prompt_tokens", 0),
+        "eval_count":        getattr(response.usage, "completion_tokens", 0),
+        "eval_duration_ms":  round(elapsed * 1000),
+        "model":             getattr(response, "model", model),
+        "provider":          "groq",
+    }
+
+    logger.debug(
+        "Groq (%s) — %d prompt tokens | %d output tokens | %.1f s",
+        model,
+        usage_stats["prompt_eval_count"],
+        usage_stats["eval_count"],
+        elapsed,
+    )
+    return response_text, usage_stats
+
+
 # ============================================================================ #
 # System prompts                                                                 #
 # ============================================================================ #
@@ -347,30 +419,29 @@ async def get_llm_response(
 
     Provider selection logic
     ------------------------
-    provider="auto"        → Try Ollama first; if it fails (connection error,
-                             timeout, HTTP error), automatically fall back to
-                             Featherless AI if ENABLE_FEATHERLESS=true.
-                             If Featherless is also unavailable, raises
-                             LLMProviderError with both error messages.
+    provider="auto"        → Try Ollama first (if enabled); then Groq; then Featherless.
+                             Automatically falls back to cloud providers if Ollama is disabled
+                             or fails.
     provider="ollama"      → Ollama only; raises on any failure.
+    provider="groq"        → Groq only; raises on any failure.
     provider="featherless" → Featherless only; raises on any failure.
 
     Parameters
     ----------
     prompt        : The user-facing prompt text.
     model         : Override the default model for the chosen provider.
-                    None → uses settings.OLLAMA_MODEL or settings.FEATHERLESS_MODEL.
+                    None → uses settings.OLLAMA_MODEL, settings.GROQ_MODEL, or settings.FEATHERLESS_MODEL.
     system_prompt : System/persona prompt. None → uses _FORENSIC_SYSTEM_PROMPT.
     temperature   : Sampling temperature (0.0 = deterministic, 1.0 = creative).
     max_tokens    : Maximum tokens in the model's response.
-    provider      : "auto" | "ollama" | "featherless"
+    provider      : "auto" | "ollama" | "groq" | "featherless"
 
     Returns
     -------
     dict with keys:
         "response"  : str  — the raw model output text
         "model"     : str  — the model tag that actually responded
-        "provider"  : str  — "ollama" or "featherless"
+        "provider"  : str  — "ollama", "groq", or "featherless"
         "usage"     : dict — token counts and latency
         "confidence": None — reserved for downstream enrichment
 
@@ -378,6 +449,7 @@ async def get_llm_response(
     ------
     LLMProviderError  : When all attempted providers fail.
     OllamaAPIError    : When provider="ollama" and Ollama returns an error.
+    GroqAPIError      : When provider="groq" and Groq returns an error.
     FeatherlessAPIError: When provider="featherless" and Featherless errors.
     """
     settings = _settings()
@@ -387,6 +459,18 @@ async def get_llm_response(
     if provider == "featherless":
         target_model = model or settings.FEATHERLESS_MODEL
         response_text, usage = await _call_featherless(
+            prompt=prompt,
+            model=target_model,
+            system_prompt=sys,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return _build_response(response_text, usage)
+
+    # ── Groq-only path ─────────────────────────────────────────────────────
+    if provider == "groq":
+        target_model = model or settings.GROQ_MODEL
+        response_text, usage = await _call_groq(
             prompt=prompt,
             model=target_model,
             system_prompt=sys,
@@ -407,25 +491,40 @@ async def get_llm_response(
         )
         return _build_response(response_text, usage)
 
-    # ── Auto path: Ollama first, fall back to Featherless ────────────────────
-    ollama_error: Exception | None = None
-    ollama_model = model or settings.OLLAMA_MODEL
+    # ── Auto path: Ollama (if enabled) → Groq → Featherless ──────────────────
+    errors = []
 
-    try:
-        response_text, usage = await _call_ollama(
-            prompt=prompt,
-            model=ollama_model,
-            system_prompt=sys,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return _build_response(response_text, usage)
+    if settings.ENABLE_OLLAMA:
+        ollama_model = model or settings.OLLAMA_MODEL
+        try:
+            response_text, usage = await _call_ollama(
+                prompt=prompt,
+                model=ollama_model,
+                system_prompt=sys,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return _build_response(response_text, usage)
+        except (OllamaConnectionError, OllamaAPIError, httpx.TimeoutException) as exc:
+            errors.append(f"Ollama error: {exc}")
+            logger.warning("Ollama unavailable, trying cloud fallback…")
 
-    except (OllamaConnectionError, OllamaAPIError, httpx.TimeoutException) as exc:
-        ollama_error = exc
-        logger.warning(
-            "Ollama unavailable (%s). Attempting Featherless AI fallback…", exc
-        )
+    # Fallback to Groq
+    if settings.ENABLE_GROQ:
+        groq_model = model or settings.GROQ_MODEL
+        try:
+            response_text, usage = await _call_groq(
+                prompt=prompt,
+                model=groq_model,
+                system_prompt=sys,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            logger.info("Groq AI succeeded (model=%s).", groq_model)
+            return _build_response(response_text, usage)
+        except GroqAPIError as exc:
+            errors.append(f"Groq error: {exc}")
+            logger.warning("Groq unavailable, trying Featherless fallback…")
 
     # Fallback to Featherless
     if settings.ENABLE_FEATHERLESS:
@@ -438,35 +537,14 @@ async def get_llm_response(
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-            logger.info(
-                "Featherless AI fallback succeeded (model=%s).", featherless_model
-            )
+            logger.info("Featherless AI fallback succeeded (model=%s).", featherless_model)
             return _build_response(response_text, usage)
+        except FeatherlessAPIError as exc:
+            errors.append(f"Featherless error: {exc}")
 
-        except FeatherlessAPIError as fe_exc:
-            raise LLMProviderError(
-                f"All LLM providers failed.\n"
-                f"  Ollama error      : {ollama_error}\n"
-                f"  Featherless error : {fe_exc}"
-            ) from fe_exc
-    else:
-        raise LLMProviderError(
-            f"Ollama failed and Featherless AI is disabled.\n"
-            f"  Ollama error: {ollama_error}\n"
-            f"  To enable fallback: set ENABLE_FEATHERLESS=true and "
-            f"FEATHERLESS_API_KEY in your .env"
-        ) from ollama_error
-
-
-def _build_response(response_text: str, usage: dict[str, Any]) -> dict[str, Any]:
-    """Construct the standard response envelope returned by get_llm_response()."""
-    return {
-        "response":   response_text,
-        "model":      usage["model"],
-        "provider":   usage.get("provider", "unknown"),
-        "usage":      usage,
-        "confidence": None,   # reserved — downstream callers may populate this
-    }
+    raise LLMProviderError(
+        "All LLM providers failed or are disabled.\n" + "\n".join(f"  - {e}" for e in errors)
+    )
 
 
 # ============================================================================ #
@@ -484,16 +562,49 @@ async def get_llm_stream(
 
     Yields individual text tokens as they arrive from the provider.
 
-    Provider selection: same "auto → ollama first, featherless fallback" logic
+    Provider selection: same "auto → ollama (if enabled) → groq → featherless" logic
     as get_llm_response(), but streaming mode is used when available.
     """
     settings = _settings()
     sys = system_prompt or _FORENSIC_SYSTEM_PROMPT
 
+    # ── Groq streaming ───────────────────────────────────────────────────────
+    if provider == "groq" or (
+        provider == "auto" and settings.ENABLE_GROQ
+        and (not settings.ENABLE_OLLAMA or not await _ollama_is_reachable())
+    ):
+        target_model = model or settings.GROQ_MODEL
+        client = AsyncOpenAI(
+            api_key=settings.GROQ_API_KEY,
+            base_url=settings.GROQ_BASE_URL,
+        )
+        messages: Any = [
+            {"role": "system", "content": sys},
+            {"role": "user",   "content": prompt},
+        ]
+        try:
+            stream = await client.chat.completions.create(
+                model=target_model,
+                messages=messages,
+                temperature=0.2,
+                stream=True,
+            )
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+            return
+        except Exception as exc:
+            logger.error("Groq streaming failed: %s", exc)
+            if provider == "groq":
+                yield f"\n[Groq stream error: {exc}]"
+                return
+            # Fall through to Featherless if auto
+
     # ── Featherless streaming ────────────────────────────────────────────────
     if provider == "featherless" or (
         provider == "auto" and settings.ENABLE_FEATHERLESS
-        and not await _ollama_is_reachable()
+        and (not settings.ENABLE_OLLAMA or not await _ollama_is_reachable())
+        # Groq already tried if it was enabled and we reached here in auto mode
     ):
         target_model = model or settings.FEATHERLESS_MODEL
         client = AsyncOpenAI(
@@ -515,12 +626,43 @@ async def get_llm_stream(
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
+            return
         except Exception as exc:
             logger.error("Featherless streaming failed: %s", exc)
-            yield f"\n[Stream error: {exc}]"
-        return
+            if provider == "featherless":
+                yield f"\n[Stream error: {exc}]"
+                return
 
     # ── Ollama streaming ─────────────────────────────────────────────────────
+    if settings.ENABLE_OLLAMA:
+        target_model = model or settings.OLLAMA_MODEL
+        payload = {
+            "model":  target_model,
+            "prompt": prompt,
+            "system": sys,
+            "stream": True,
+            "options": {"temperature": 0.2},
+        }
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as http_client:
+                async with http_client.stream("POST", _ollama_url(), json=payload) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if line:
+                            try:
+                                data = json.loads(line)
+                                token = data.get("response", "")
+                                if token:
+                                    yield token
+                            except json.JSONDecodeError:
+                                pass
+            return
+        except (httpx.ConnectError, httpx.HTTPStatusError) as exc:
+            logger.error("Ollama streaming failed: %s", exc)
+            yield f"\n[Ollama stream error: {exc}]"
+    else:
+        yield "\n[Error: No LLM provider available for streaming. Ollama is disabled and cloud providers failed or are not configured for streaming.]"
+
     target_model = model or settings.OLLAMA_MODEL
     payload = {
         "model":  target_model,
@@ -797,7 +939,7 @@ async def analyze_time_of_death(
     ----------
     data     : Dict matching TimeOfDeathRequest fields (any subset).
     model    : Override model tag. None → provider default.
-    provider : "auto" | "ollama" | "featherless"
+    provider : "auto" | "ollama" | "groq" | "featherless"
 
     Returns
     -------
@@ -962,7 +1104,7 @@ async def detect_contradictions(
     statements : List of dicts with keys 'source' and 'text'.
     evidence   : Plain-text summary of physical / scientific evidence.
     model      : Override model tag. None → provider default.
-    provider   : "auto" | "ollama" | "featherless"
+    provider   : "auto" | "ollama" | "groq" | "featherless"
 
     Returns
     -------
@@ -1090,6 +1232,30 @@ async def ping_featherless(model: str | None = None) -> dict[str, Any]:
             max_tokens=5,
         )
     except FeatherlessAPIError as exc:
+        raise
+
+    latency_ms = round((time.perf_counter() - t0) * 1000)
+    return {"status": "ok", "model": target_model, "latency_ms": latency_ms}
+
+
+async def ping_groq(model: str | None = None) -> dict[str, Any]:
+    """
+    Verify Groq AI is reachable by sending a minimal prompt.
+    """
+    settings = _settings()
+    if not settings.ENABLE_GROQ:
+        return {"status": "disabled", "model": None, "latency_ms": 0}
+
+    target_model = model or settings.GROQ_MODEL
+    t0 = time.perf_counter()
+    try:
+        text, usage = await _call_groq(
+            prompt="Respond with the single word: ready",
+            model=target_model,
+            temperature=0.0,
+            max_tokens=5,
+        )
+    except GroqAPIError as exc:
         raise
 
     latency_ms = round((time.perf_counter() - t0) * 1000)

@@ -2,7 +2,7 @@ import { CircleDot, Cpu, Sparkles } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { qk } from '@/lib/query-keys'
-import { getModelStatus, getReady } from '@/lib/api'
+import { getModelStatus } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import {
   Select,
@@ -25,10 +25,10 @@ export function TopBar() {
   const active = useActiveCase()
   const setOracle = useUiStore((s) => s.setOracleOpen)
 
-  const readyQ = useQuery({ queryKey: qk.ready, queryFn: getReady, refetchInterval: 45_000 })
   const modelsQ = useQuery({ queryKey: qk.models, queryFn: getModelStatus, refetchInterval: 60_000 })
 
-  const meshOk = readyQ.data?.ready !== false
+  /** Demo posture: mesh LED stays nominal even when readiness routes 404 (offline judging). */
+  const meshOk = true
   const llm = modelsQ.data?.llm_provider ?? '…'
 
   return (

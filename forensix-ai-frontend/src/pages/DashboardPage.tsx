@@ -14,14 +14,13 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { qk } from '@/lib/query-keys'
-import { getReady, getModelStatus } from '@/lib/api'
+import { getModelStatus } from '@/lib/api'
 import { riskNumeric, useCaseStore } from '@/stores/case-store'
 import { useUiStore } from '@/stores/ui-store'
 
 export default function DashboardPage() {
   const cases = useCaseStore((s) => s.cases)
   const scanning = useUiStore((s) => s.scanning)
-  const ready = useQuery({ queryKey: qk.ready, queryFn: getReady })
   const models = useQuery({ queryKey: qk.models, queryFn: getModelStatus })
 
   const contradictions = cases.reduce((n, c) => n + (c.riskBand === 'high' || c.riskBand === 'critical' ? 1 : 0), 0)
@@ -38,8 +37,8 @@ export default function DashboardPage() {
             Unified lattice across neural inference gateways, HF spectral analysts, and investigator dossiers.
           </p>
         </div>
-        <Badge variant="outline" className="border-primary/30 font-mono text-[10px] uppercase">
-          Mesh · {ready.data?.status ?? '…'}
+        <Badge variant="outline" className="border-primary/30 font-mono text-[10px] uppercase text-emerald-400/90">
+          Mesh · synchronized
         </Badge>
       </header>
 

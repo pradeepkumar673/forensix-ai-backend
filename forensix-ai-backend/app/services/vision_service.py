@@ -177,6 +177,11 @@ async def _call_vision_model(
     -------
     (response_text, inference_ms)
     """
+    if not _settings().ENABLE_OLLAMA:
+        raise RuntimeError(
+            "Ollama is disabled in settings. ENABLE_OLLAMA=true is required for basic vision analysis."
+        )
+
     payload: dict[str, Any] = {
         "model":   model,
         "prompt":  prompt,

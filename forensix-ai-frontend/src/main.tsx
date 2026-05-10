@@ -8,7 +8,10 @@ import './index.css'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AppProviders>
-      <RouterProvider router={router} />
+      <RouterProvider
+        router={router}
+        future={{ v7_startTransition: true }}
+      />
     </AppProviders>
   </StrictMode>,
 )

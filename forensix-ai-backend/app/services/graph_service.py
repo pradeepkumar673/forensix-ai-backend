@@ -51,8 +51,6 @@ logger = logging.getLogger(__name__)
 # Constants                                                                     #
 # --------------------------------------------------------------------------- #
 
-_DEFAULT_MODEL = "qwen3:14b"
-
 # Risk score colour bands for pyvis visualisation
 _RISK_COLORS: list[tuple[float, str]] = [
     (80.0, "#e74c3c"),   # critical  — red
@@ -109,15 +107,16 @@ def _extract_json_block(text: str) -> Any:
 
 async def _call_ollama(
     prompt: str,
-    model:  str = _DEFAULT_MODEL,
+    model: str | None = None,
     system: str | None = None,
     temperature: float = 0.1,
     max_tokens: int = 4096,
     timeout: float = 180.0,
 ) -> tuple[str, int]:
     """Async POST to Ollama. Returns (response_text, inference_ms)."""
+    mdl = model or _settings().OLLAMA_MODEL
     payload: dict[str, Any] = {
-        "model":   model,
+        "model":   mdl,
         "prompt":  prompt,
         "stream":  False,
         "options": {
@@ -343,9 +342,34 @@ def _parse_uuid_list(raw_list: list) -> list[UUID]:
 # Public API                                                                    #
 # --------------------------------------------------------------------------- #
 
+async def _llm_extract_entities_chunk(
+    source_text: str,
+    model: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    prompt = _EXTRACT_ENTITIES_PROMPT.format(text=source_text)
+    response_text, inference_ms = await _call_ollama(
+        prompt=prompt,
+        model=model,
+        system=_GRAPH_SYSTEM_PROMPT,
+        temperature=0.05,
+        max_tokens=5000,
+    )
+    try:
+        parsed = _extract_json_block(response_text)
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.error("Entity extraction JSON parse failure: %s", exc)
+        raise ValueError(
+            f"LLM did not return valid JSON for entity extraction.\n"
+            f"Raw response (first 400 chars):\n{response_text[:400]}"
+        ) from exc
+    entities = parsed.get("entities", [])
+    relationships = parsed.get("relationships", [])
+    return entities, relationships, inference_ms
+
+
 async def extract_entities(
     text:  str,
-    model: str = _DEFAULT_MODEL,
+    model: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Extract entities and relationships from any forensic evidence text.
@@ -372,27 +396,16 @@ async def extract_entities(
     truncated = len(text) > max_chars
     source_text = text[:max_chars] + ("\n\n[TRUNCATED]" if truncated else "")
 
-    prompt = _EXTRACT_ENTITIES_PROMPT.format(text=source_text)
-
-    response_text, inference_ms = await _call_ollama(
-        prompt=prompt,
-        model=model,
-        system=_GRAPH_SYSTEM_PROMPT,
-        temperature=0.05,
-        max_tokens=5000,
-    )
+    primary = model or _settings().OLLAMA_MODEL
+    fallback = (_settings().OLLAMA_FALLBACK_MODEL or "").strip()
 
     try:
-        parsed = _extract_json_block(response_text)
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.error("Entity extraction JSON parse failure: %s", exc)
-        raise ValueError(
-            f"LLM did not return valid JSON for entity extraction.\n"
-            f"Raw response (first 400 chars):\n{response_text[:400]}"
-        ) from exc
-
-    entities      = parsed.get("entities", [])
-    relationships = parsed.get("relationships", [])
+        entities, relationships, inference_ms = await _llm_extract_entities_chunk(source_text, primary)
+    except (RuntimeError, ValueError) as exc:
+        logger.warning("Entity extract failed model=%s: %s", primary, exc)
+        if not fallback or fallback == primary:
+            raise
+        entities, relationships, inference_ms = await _llm_extract_entities_chunk(source_text, fallback)
 
     logger.info(
         "Extracted %d entities, %d relationships from text (%d chars) in %d ms",
@@ -406,7 +419,7 @@ async def build_entity_graph(
     relationships_raw: list[dict[str, Any]],
     case_id:           UUID | None = None,
     context:           str = "",
-    model:             str = _DEFAULT_MODEL,
+    model:             str | None = None,
 ) -> EntityGraphResponse:
     """
     Build and synthesise a full EntityGraphResponse from raw entity/relationship dicts.
@@ -447,23 +460,36 @@ async def build_entity_graph(
         data_json= json.dumps(combined_data, indent=2, default=str)[:14_000],
     )
 
-    t0 = time.perf_counter()
-    response_text, inference_ms = await _call_ollama(
-        prompt=prompt,
-        model=model,
-        system=_GRAPH_SYSTEM_PROMPT,
-        temperature=0.05,
-        max_tokens=6000,
-    )
+    primary = model or _settings().OLLAMA_MODEL
+    fallback = (_settings().OLLAMA_FALLBACK_MODEL or "").strip()
+
+    async def _llm_graph_merge(m: str) -> tuple[dict[str, Any], int]:
+        response_text, inference_ms = await _call_ollama(
+            prompt=prompt,
+            model=m,
+            system=_GRAPH_SYSTEM_PROMPT,
+            temperature=0.05,
+            max_tokens=6000,
+        )
+        try:
+            parsed = _extract_json_block(response_text)
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.error("Graph build JSON parse failure: %s", exc)
+            raise ValueError(
+                f"LLM did not return valid JSON for graph construction.\n"
+                f"Raw response (first 400 chars):\n{response_text[:400]}"
+            ) from exc
+        return parsed, inference_ms
 
     try:
-        parsed = _extract_json_block(response_text)
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.error("Graph build JSON parse failure: %s", exc)
-        raise ValueError(
-            f"LLM did not return valid JSON for graph construction.\n"
-            f"Raw response (first 400 chars):\n{response_text[:400]}"
-        ) from exc
+        parsed, inference_ms = await _llm_graph_merge(primary)
+        used_model = primary
+    except (RuntimeError, ValueError) as exc:
+        logger.warning("Graph build failed model=%s: %s", primary, exc)
+        if not fallback or fallback == primary:
+            raise
+        parsed, inference_ms = await _llm_graph_merge(fallback)
+        used_model = fallback
 
     # ── Convert dicts → schema objects ─────────────────────────────────────── #
     entities: list[GraphEntity] = []
@@ -501,7 +527,7 @@ async def build_entity_graph(
             "Entity relationship graph constructed from available evidence.",
         ),
         model_meta = AIModelMeta(
-            model_name   = model,
+            model_name   = used_model,
             inference_ms = inference_ms,
         ),
     )
