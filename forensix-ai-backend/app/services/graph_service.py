@@ -35,6 +35,8 @@ from uuid import UUID, uuid4
 import httpx
 import networkx as nx
 
+from app.services.llm_service import get_llm_response
+
 from app.core.config import get_settings
 from app.schemas.analysis import (
     AIModelMeta,
@@ -344,16 +346,21 @@ def _parse_uuid_list(raw_list: list) -> list[UUID]:
 
 async def _llm_extract_entities_chunk(
     source_text: str,
-    model: str,
+    model: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    import time as _time
     prompt = _EXTRACT_ENTITIES_PROMPT.format(text=source_text)
-    response_text, inference_ms = await _call_ollama(
+    t0 = _time.perf_counter()
+    resp = await get_llm_response(
         prompt=prompt,
-        model=model,
-        system=_GRAPH_SYSTEM_PROMPT,
+        system_prompt=_GRAPH_SYSTEM_PROMPT,
         temperature=0.05,
         max_tokens=5000,
+        provider="auto",
+        model=model,
     )
+    inference_ms = round((_time.perf_counter() - t0) * 1000)
+    response_text = resp.get("response", "")
     try:
         parsed = _extract_json_block(response_text)
     except (json.JSONDecodeError, ValueError) as exc:
@@ -396,16 +403,11 @@ async def extract_entities(
     truncated = len(text) > max_chars
     source_text = text[:max_chars] + ("\n\n[TRUNCATED]" if truncated else "")
 
-    primary = model or _settings().OLLAMA_MODEL
-    fallback = (_settings().OLLAMA_FALLBACK_MODEL or "").strip()
-
     try:
-        entities, relationships, inference_ms = await _llm_extract_entities_chunk(source_text, primary)
-    except (RuntimeError, ValueError) as exc:
-        logger.warning("Entity extract failed model=%s: %s", primary, exc)
-        if not fallback or fallback == primary:
-            raise
-        entities, relationships, inference_ms = await _llm_extract_entities_chunk(source_text, fallback)
+        entities, relationships, inference_ms = await _llm_extract_entities_chunk(source_text, model)
+    except Exception as exc:
+        logger.warning("Entity extract failed: %s", exc)
+        raise
 
     logger.info(
         "Extracted %d entities, %d relationships from text (%d chars) in %d ms",
@@ -463,14 +465,19 @@ async def build_entity_graph(
     primary = model or _settings().OLLAMA_MODEL
     fallback = (_settings().OLLAMA_FALLBACK_MODEL or "").strip()
 
-    async def _llm_graph_merge(m: str) -> tuple[dict[str, Any], int]:
-        response_text, inference_ms = await _call_ollama(
+    async def _llm_graph_merge(m: str | None) -> tuple[dict[str, Any], int]:
+        import time as _time
+        t0 = _time.perf_counter()
+        resp = await get_llm_response(
             prompt=prompt,
-            model=m,
-            system=_GRAPH_SYSTEM_PROMPT,
+            system_prompt=_GRAPH_SYSTEM_PROMPT,
             temperature=0.05,
             max_tokens=6000,
+            provider="auto",
+            model=m,
         )
+        inference_ms = round((_time.perf_counter() - t0) * 1000)
+        response_text = resp.get("response", "")
         try:
             parsed = _extract_json_block(response_text)
         except (json.JSONDecodeError, ValueError) as exc:
@@ -482,14 +489,11 @@ async def build_entity_graph(
         return parsed, inference_ms
 
     try:
-        parsed, inference_ms = await _llm_graph_merge(primary)
-        used_model = primary
-    except (RuntimeError, ValueError) as exc:
-        logger.warning("Graph build failed model=%s: %s", primary, exc)
-        if not fallback or fallback == primary:
-            raise
-        parsed, inference_ms = await _llm_graph_merge(fallback)
-        used_model = fallback
+        parsed, inference_ms = await _llm_graph_merge(model)
+        used_model = parsed.get("model", "auto")
+    except Exception as exc:
+        logger.warning("Graph build failed: %s", exc)
+        raise
 
     # ── Convert dicts → schema objects ─────────────────────────────────────── #
     entities: list[GraphEntity] = []

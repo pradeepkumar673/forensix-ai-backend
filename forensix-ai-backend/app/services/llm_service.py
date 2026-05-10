@@ -87,6 +87,28 @@ def _ollama_url() -> str:
     return f"{_settings().OLLAMA_BASE_URL}/api/generate"
 
 
+def _build_response(response_text: str, usage: dict) -> dict:
+    """
+    Build the standard response envelope returned by get_llm_response().
+
+    Returns
+    -------
+    dict with keys:
+        "response"   : str  — raw model output text
+        "model"      : str  — model tag that produced the response
+        "provider"   : str  — "ollama", "groq", or "featherless"
+        "usage"      : dict — token counts and latency
+        "confidence" : None — reserved for downstream enrichment
+    """
+    return {
+        "response":   response_text,
+        "model":      usage.get("model", "unknown"),
+        "provider":   usage.get("provider", "unknown"),
+        "usage":      usage,
+        "confidence": None,
+    }
+
+
 def _extract_json_block(text: str) -> dict[str, Any]:
     """
     Extract the first JSON object or array from a model response.

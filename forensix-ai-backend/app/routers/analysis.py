@@ -621,13 +621,35 @@ async def get_combined_analysis(
     stored = _ANALYSIS_STORE.get(str(case_id))
 
     if not stored:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"No analysis data found for case_id '{case_id}'. "
-                "Run POST /analyze/report, /analyze/time-of-death, or "
-                "/analyze/images first."
+        # Return a structured empty response instead of 404
+        # so the frontend dashboard loads without errors.
+        from app.schemas.analysis import ForensicAnalysisResponse, AIModelMeta, ConfidenceScore
+        return ForensicAnalysisResponse(
+            case_id=case_id,
+            analysed_at=_utcnow(),
+            key_findings=[],
+            primary_hypothesis="No analysis data yet. Run report upload and analysis endpoints first.",
+            alternative_hypotheses=[],
+            recommended_next_steps=[
+                "Upload a forensic report via POST /api/v1/upload/report",
+                "Run POST /api/v1/analyze/report with the uploaded file",
+                "Run POST /api/v1/correlate/timeline to build event timeline",
+                "Run POST /api/v1/risk/full for risk analysis",
+            ],
+            analyses_completed=[],
+            analyses_pending=[
+                "autopsy_report", "time_of_death", "image_analyses",
+                "toxicology", "wound_analysis", "risk_score",
+                "entity_graph", "geospatial",
+            ],
+            overall_confidence=ConfidenceScore.from_float(0.0),
+            evidence_gaps=["No evidence has been analysed yet."],
+            executive_summary=(
+                "No analysis data has been collected for this case yet. "
+                "Please upload evidence documents and run the analysis endpoints "
+                "to populate the forensic workspace."
             ),
+            model_meta=_make_model_meta(model_name="none", inference_ms=0),
         )
 
     # ── 2. Build context text for LLM synthesis ───────────────────────────── #
