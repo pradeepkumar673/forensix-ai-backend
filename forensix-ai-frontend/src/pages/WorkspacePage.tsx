@@ -1,5 +1,15 @@
+/**
+ * WorkspacePage.tsx — Updated with Geospatial Intelligence tab
+ *
+ * Changes from original:
+ *  1. Added `import { ForensicMap } from '@/components/map/ForensicMap'`
+ *  2. Added `Map` icon import from lucide-react
+ *  3. Added "geospatial" tab trigger + TabsContent
+ *  4. Passes caseId, reportText (blobText), and combinedAnalysis to ForensicMap
+ */
+
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Loader2, Network, ScrollText, ShieldAlert, Sparkles, Waves } from 'lucide-react'
+import { Loader2, Map, Network, ScrollText, ShieldAlert, Sparkles, Waves } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import {
   Radar,
@@ -15,6 +25,7 @@ import {
 } from 'recharts'
 import { KnowledgeGraphBoard } from '@/components/workspace/KnowledgeGraphBoard'
 import { TimelineVertical } from '@/components/workspace/TimelineVertical'
+import { ForensicMap } from '@/components/map/ForensicMap'
 import {
   buildKnowledgeGraph,
   audioStress,
@@ -156,6 +167,11 @@ export default function WorkspacePage() {
     return String(d.executive_summary ?? d.summary ?? d.primary_hypothesis ?? '')
   }, [combined.data])
 
+  const combinedAnalysisText = useMemo(() => {
+    if (!combined.data) return ''
+    return JSON.stringify(combined.data)
+  }, [combined.data])
+
   const radarRows = useMemo(() => {
     const rs = riskMut.data?.data?.risk_score as Record<string, unknown> | undefined
     if (!rs) {
@@ -240,7 +256,7 @@ export default function WorkspacePage() {
           <p className="font-mono text-[11px] uppercase tracking-[0.34em] text-primary">Forensic intelligence</p>
           <h1 className="font-display text-4xl font-semibold text-card-foreground">Workspace lattice</h1>
           <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-            Cross-domain reasoning harness — reports, chronologies, entity graphs, phonetics, and calibrated risk tensors.
+            Cross-domain reasoning harness — reports, chronologies, entity graphs, phonetics, risk tensors, and geospatial intelligence.
           </p>
         </div>
         {!caseId && (
@@ -271,6 +287,11 @@ export default function WorkspacePage() {
           <TabsTrigger value="risk">
             <ShieldAlert className="mr-1 h-3.5 w-3.5" />
             Risk
+          </TabsTrigger>
+          {/* ── NEW TAB ── */}
+          <TabsTrigger value="geospatial" className="data-[state=active]:text-cyan-400">
+            <Map className="mr-1 h-3.5 w-3.5" />
+            Geospatial
           </TabsTrigger>
         </TabsList>
 
@@ -441,6 +462,33 @@ export default function WorkspacePage() {
               </ScrollArea>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* ══════════════════════════════════════════════════════════════════
+            NEW: Geospatial Intelligence Tab
+        ══════════════════════════════════════════════════════════════════ */}
+        <TabsContent value="geospatial" className="pt-6">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.34em] text-cyan-400">
+                Geospatial Intelligence · Neural Geocoding
+              </p>
+              <h2 className="font-display text-xl font-semibold text-card-foreground">
+                Forensic Geolocation Lattice
+              </h2>
+              <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                LLM-extracted crime scene mapping · investigative node overlay · dossier{' '}
+                <span className="text-primary">{caseId.slice(0, 8) || 'UNBOUND'}</span>
+              </p>
+            </div>
+          </div>
+          <div style={{ height: 640 }}>
+            <ForensicMap
+              caseId={caseId || 'default'}
+              reportText={blobText || active?.summary}
+              combinedAnalysis={combinedAnalysisText}
+            />
+          </div>
         </TabsContent>
       </Tabs>
     </div>
